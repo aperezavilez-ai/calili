@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useChatStore } from '@/store/chat-store';
 import { useSettingsStore } from '@/store/settings-store';
 import { Sidebar } from '@/components/Sidebar';
@@ -21,6 +21,8 @@ export default function ChatInterface() {
 
   const { voiceEnabled, voiceGender, imageSize } = useSettingsStore();
   const [streamingContent, setStreamingContent] = useState('');
+  const activeRequestControllerRef = useRef<AbortController | null>(null);
+  const cancelRequestedRef = useRef(false);
 
   const normalizeCaliliResponse = (text: string) => text
     .replace(/\b(?:soy|eres)\s+(?:un\s+)?(?:asistente\s+)?(?:basado|impulsado)\s+en\s+(?:GPT(?:-?5(?:\.5)?)?|ChatGPT)\b[^.?!]*(?:[.?!]|$)/gi, 'Soy Calili, tu asistente virtual.')
@@ -97,12 +99,15 @@ export default function ChatInterface() {
 
     setLoading(true);
     setStreamingContent('');
+    cancelRequestedRef.current = false;
 
     const wantsImage = /\b(crea|genera|haz|dibuja|diseña|diseña)\b[\s\S]{0,80}\b(imagen|foto|dibujo|ilustraci[oó]n|retrato)\b/i.test(content) ||
       /\b(imagen|foto|dibujo|ilustraci[oó]n)\b[\s\S]{0,80}\b(crea|genera|haz|dibuja)\b/i.test(content);
     const wantsWeb = /\b(busca|buscar|internet|web|actual|hoy|noticias|noticia|precio|clima|cotizaci[oó]n|[uú]ltimas|reciente)\b/i.test(content);
     const wantsVoice = /\b(habla|hablando|voz|en voz alta|lee|leer)\b/i.test(content);
     const wantsDocument = /\b(crea|genera|haz|prepara|elabora|descarga)\b[\s\S]{0,100}\b(documento|archivo|informe|reporte|carta|curr[ií]culum|markdown|\.md|\.txt)\b/i.test(content);
+
+    let requestTimeout: number | null = null;
 
     try {
       if (wantsImage) {
@@ -160,10 +165,14 @@ export default function ChatInterface() {
           }
         }
 
+        const chatController = new AbortController();
+        activeRequestControllerRef.current = chatController;
+        requestTimeout = window.setTimeout(() => chatController.abort(), 25000);
         const response = await fetch('/api/chat', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ messages: msgs, webContext, wantsDocument }),
+          signal: chatController.signal,
         });
 
         if (!response.ok) {
@@ -224,13 +233,24 @@ export default function ChatInterface() {
       }
     } catch (error: any) {
       console.error('Error:', error);
-      addMessage(convId, {
-        role: 'assistant',
-        content: `❌ **Error:** ${error.message || 'No se pudo conectar con la API'}`,
-      });
+      if (!cancelRequestedRef.current) {
+        addMessage(convId, {
+          role: 'assistant',
+          content: `❌ **Error:** ${error.message || 'No se pudo conectar con la API'}`,
+        });
+      }
     } finally {
+      if (requestTimeout !== null) window.clearTimeout(requestTimeout);
+      activeRequestControllerRef.current = null;
       setLoading(false);
     }
+  };
+
+  const stopResponse = () => {
+    cancelRequestedRef.current = true;
+    activeRequestControllerRef.current?.abort();
+    setStreamingContent('');
+    setLoading(false);
   };
 
   const displayMessages = [
@@ -254,7 +274,7 @@ export default function ChatInterface() {
       <Sidebar />
       <main className="flex-1 flex flex-col min-h-0 min-w-0 w-full">
         <MessageList messages={displayMessages} />
-        <InputBox onSendMessage={handleSendMessage} isLoading={isLoading} />
+        <InputBox onSendMessage={handleSendMessage} onStopMessage={stopResponse} isLoading={isLoading} />
       </main>
     </div>
   );

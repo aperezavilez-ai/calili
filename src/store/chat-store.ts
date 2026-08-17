@@ -141,6 +141,12 @@ export const useChatStore = create<ChatStore>()(
     }),
     {
       name: 'calili-chat-storage',
+      // Un request interrumpido no debe reabrir la app con el boton bloqueado.
+      merge: (persistedState, currentState) => ({
+        ...currentState,
+        ...(persistedState as Partial<ChatStore>),
+        isLoading: false,
+      }),
     }
   )
 );

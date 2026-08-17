@@ -1,14 +1,15 @@
 'use client';
 
 import { useState, useRef, useEffect } from 'react';
-import { Send, Loader2, Mic, MicOff } from 'lucide-react';
+import { Send, Loader2, Mic, MicOff, Square } from 'lucide-react';
 
 interface InputBoxProps {
   onSendMessage: (message: string) => void;
+  onStopMessage: () => void;
   isLoading: boolean;
 }
 
-export function InputBox({ onSendMessage, isLoading }: InputBoxProps) {
+export function InputBox({ onSendMessage, onStopMessage, isLoading }: InputBoxProps) {
   const [input, setInput] = useState('');
   const [isListening, setIsListening] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -114,16 +115,19 @@ export function InputBox({ onSendMessage, isLoading }: InputBoxProps) {
 
           {/* Botón enviar */}
           <button
-            onClick={handleSubmit}
-            disabled={!input.trim() || isLoading}
+            onClick={isLoading ? onStopMessage : handleSubmit}
+            disabled={!isLoading && !input.trim()}
             className={`p-2 rounded-xl transition-all flex-shrink-0 ${
-              input.trim() && !isLoading
+              isLoading
+                ? 'bg-red-500 text-white hover:bg-red-400'
+                : input.trim()
                 ? 'bg-white text-black hover:bg-white/90'
                 : 'bg-white/10 text-white/40 cursor-not-allowed'
             }`}
+            title={isLoading ? 'Detener respuesta' : 'Enviar mensaje'}
           >
             {isLoading ? (
-              <Loader2 className="w-5 h-5 animate-spin" />
+              <Square className="w-4 h-4 fill-current" />
             ) : (
               <Send className="w-5 h-5" />
             )}
