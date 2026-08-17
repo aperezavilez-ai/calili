@@ -1,0 +1,21 @@
+{
+  "version": 1,
+  "projectName": "Calili",
+  "projectSlug": "calili",
+  "isolationMode": "legacy_shared_schema",
+  "supabase": {
+    "url": "https://supabase.gafcore.com",
+    "instanceId": "gafcore-shared",
+    "database": "postgres",
+    "schema": "calili"
+  },
+  "deployment": {
+    "platform": "vercel",
+    "github": "aperezavilez/calili",
+    "domain": "calili.vercel.app"
+  },
+  "legacyException": {
+    "reason": "Usa Supabase propio GafCore compartido",
+    "migrationRequired": false
+  }
+}
