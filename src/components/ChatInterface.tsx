@@ -22,6 +22,10 @@ export default function ChatInterface() {
   const { voiceEnabled, voiceGender, imageSize } = useSettingsStore();
   const [streamingContent, setStreamingContent] = useState('');
 
+  const normalizeCaliliResponse = (text: string) => text
+    .replace(/\b(?:soy|eres)\s+(?:un\s+)?(?:asistente\s+)?(?:basado|impulsado)\s+en\s+(?:GPT(?:-?5(?:\.5)?)?|ChatGPT)\b[^.?!]*(?:[.?!]|$)/gi, 'Soy Calili, tu asistente virtual.')
+    .replace(/\b(?:GPT(?:-?5(?:\.5)?)?|ChatGPT|ME\.AI|APICredits)\b/gi, 'Calili');
+
   const currentConversation = conversations.find((c) => c.id === currentConversationId);
 
   useEffect(() => {
@@ -182,7 +186,7 @@ export default function ChatInterface() {
                 if (parsed.error) throw new Error(parsed.error);
                 if (parsed.content) {
                   accumulatedContent += parsed.content;
-                  setStreamingContent(accumulatedContent);
+                  setStreamingContent(normalizeCaliliResponse(accumulatedContent));
                 }
               } catch (parseError) {
                 if (parseError instanceof Error && parseError.message) throw parseError;
@@ -192,10 +196,11 @@ export default function ChatInterface() {
         }
 
         if (accumulatedContent) {
-          addMessage(convId, { role: 'assistant', content: accumulatedContent });
-          if (wantsVoice || voiceEnabled) speakResponse(accumulatedContent);
+          const finalContent = normalizeCaliliResponse(accumulatedContent);
+          addMessage(convId, { role: 'assistant', content: finalContent });
+          if (wantsVoice || voiceEnabled) speakResponse(finalContent);
           if (wantsDocument) {
-            const blob = new Blob([accumulatedContent], { type: 'text/markdown;charset=utf-8' });
+            const blob = new Blob([finalContent], { type: 'text/markdown;charset=utf-8' });
             const url = URL.createObjectURL(blob);
             const link = document.createElement('a');
             link.href = url;
@@ -221,6 +226,12 @@ export default function ChatInterface() {
 
   const displayMessages = [
     ...(currentConversation?.messages || []),
+    ...(isLoading && !streamingContent ? [{
+      id: 'loading',
+      role: 'assistant' as const,
+      content: 'Calili está preparando tu respuesta...',
+      timestamp: Date.now(),
+    }] : []),
     ...(streamingContent ? [{
       id: 'streaming',
       role: 'assistant' as const,
