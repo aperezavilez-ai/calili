@@ -36,7 +36,8 @@ class GPTClient {
   constructor() {
     this.apiUrl = process.env.GPT_API_URL || '';
     this.apiKey = process.env.GPT_API_KEY || '';
-    this.model = process.env.GPT_MODEL || 'gpt-5.5';
+    // El Gateway selecciona el modelo por proveedor y puede cambiar al fallback.
+    this.model = process.env.GPT_MODEL || '';
   }
 
   private validateConfig() {
@@ -56,18 +57,19 @@ class GPTClient {
 
   async chat(request: ChatCompletionRequest): Promise<ChatCompletionResponse> {
     this.validateConfig();
+    const requestBody = {
+      ...request,
+      ...(this.model ? { model: this.model } : {}),
+      temperature: request.temperature || 0.7,
+      max_tokens: request.max_tokens || 1200,
+    };
     const response = await fetch(this.apiUrl, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
         'Authorization': `Bearer ${this.apiKey}`,
       },
-      body: JSON.stringify({
-        ...request,
-        model: this.model,
-        temperature: request.temperature || 0.7,
-        max_tokens: request.max_tokens || 1200,
-      }),
+      body: JSON.stringify(requestBody),
     });
 
     if (!response.ok) {
@@ -79,19 +81,20 @@ class GPTClient {
 
   async *chatStream(request: ChatCompletionRequest): AsyncGenerator<string, void, unknown> {
     this.validateConfig();
+    const requestBody = {
+      ...request,
+      stream: true,
+      ...(this.model ? { model: this.model } : {}),
+      temperature: request.temperature || 0.7,
+      max_tokens: request.max_tokens || 1200,
+    };
     const response = await fetch(this.apiUrl, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
         'Authorization': `Bearer ${this.apiKey}`,
       },
-      body: JSON.stringify({
-        ...request,
-        stream: true,
-        model: this.model,
-        temperature: request.temperature || 0.7,
-        max_tokens: request.max_tokens || 1200,
-      }),
+      body: JSON.stringify(requestBody),
     });
 
     if (!response.ok) {
