@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useRef, useEffect } from 'react';
-import { Send, Loader2, Image as ImageIcon, Brain, MessageCircle } from 'lucide-react';
+import { Send, Loader2, Mic, MicOff, Paperclip, Plus } from 'lucide-react';
 import { useSettingsStore } from '@/store/settings-store';
 import { useChatStore } from '@/store/chat-store';
 
@@ -12,8 +12,9 @@ interface InputBoxProps {
 
 export function InputBox({ onSendMessage, isLoading }: InputBoxProps) {
   const [input, setInput] = useState('');
+  const [isListening, setIsListening] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
-  const { aiMode, setAIMode } = useSettingsStore();
+  const recognitionRef = useRef<any>(null);
 
   useEffect(() => {
     if (textareaRef.current) {
@@ -21,6 +22,31 @@ export function InputBox({ onSendMessage, isLoading }: InputBoxProps) {
       textareaRef.current.style.height = `${Math.min(textareaRef.current.scrollHeight, 200)}px`;
     }
   }, [input]);
+
+  useEffect(() => {
+    // Inicializar reconocimiento de voz
+    if (typeof window !== 'undefined' && 'webkitSpeechRecognition' in window) {
+      const SpeechRecognition = (window as any).webkitSpeechRecognition;
+      recognitionRef.current = new SpeechRecognition();
+      recognitionRef.current.continuous = false;
+      recognitionRef.current.interimResults = false;
+      recognitionRef.current.lang = 'es-ES';
+
+      recognitionRef.current.onresult = (event: any) => {
+        const transcript = event.results[0][0].transcript;
+        setInput(prev => prev + transcript);
+        setIsListening(false);
+      };
+
+      recognitionRef.current.onerror = () => {
+        setIsListening(false);
+      };
+
+      recognitionRef.current.onend = () => {
+        setIsListening(false);
+      };
+    }
+  }, []);
 
   const handleSubmit = () => {
     if (!input.trim() || isLoading) return;
@@ -40,11 +66,26 @@ export function InputBox({ onSendMessage, isLoading }: InputBoxProps) {
     }
   };
 
+  const toggleListening = () => {
+    if (!recognitionRef.current) {
+      alert('Tu navegador no soporta reconocimiento de voz. Usa Chrome o Edge.');
+      return;
+    }
+
+    if (isListening) {
+      recognitionRef.current.stop();
+      setIsListening(false);
+    } else {
+      recognitionRef.current.start();
+      setIsListening(true);
+    }
+  };
+
   return (
-    <div className="border-t border-white/10 bg-chat-bg p-4">
-      <div className="max-w-3xl mx-auto">
+    <div className="border-t border-white/10 bg-chat-bg">
+      <div className="max-w-3xl mx-auto px-4 py-4">
         {/* Input Box estilo ChatGPT */}
-        <div className="relative flex items-end gap-2 bg-[#40414f] rounded-3xl p-3 shadow-2xl border border-white/10">
+        <div className="relative flex items-end gap-2 bg-[#40414f] rounded-3xl py-3 px-4 shadow-2xl border border-white/10">
           <textarea
             ref={textareaRef}
             value={input}
@@ -55,6 +96,25 @@ export function InputBox({ onSendMessage, isLoading }: InputBoxProps) {
             rows={1}
             disabled={isLoading}
           />
+
+          {/* Botón de voz */}
+          <button
+            onClick={toggleListening}
+            className={`p-2 rounded-xl transition-all flex-shrink-0 ${
+              isListening
+                ? 'bg-red-500 text-white animate-pulse'
+                : 'hover:bg-white/10 text-white/60'
+            }`}
+            title="Hablar con Calili"
+          >
+            {isListening ? (
+              <MicOff className="w-5 h-5" />
+            ) : (
+              <Mic className="w-5 h-5" />
+            )}
+          </button>
+
+          {/* Botón enviar */}
           <button
             onClick={handleSubmit}
             disabled={!input.trim() || isLoading}
