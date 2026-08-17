@@ -17,7 +17,7 @@ export default function ChatInterface() {
     setLoading,
   } = useChatStore();
 
-  const { aiMode, imageSize } = useSettingsStore();
+  const { voiceEnabled, voiceGender } = useSettingsStore();
   const [streamingContent, setStreamingContent] = useState('');
 
   const currentConversation = conversations.find((c) => c.id === currentConversationId);
@@ -28,6 +28,51 @@ export default function ChatInterface() {
       createConversation();
     }
   }, []);
+
+  // Reproducir respuesta con voz automáticamente
+  const speakResponse = (text: string) => {
+    if (!voiceEnabled || typeof window === 'undefined' || !window.speechSynthesis) return;
+
+    window.speechSynthesis.cancel(); // Cancelar voz anterior
+
+    const utterance = new SpeechSynthesisUtterance(text);
+    const voices = window.speechSynthesis.getVoices();
+
+    // Seleccionar voz según género configurado
+    let selectedVoice = voices.find(voice => {
+      const lowerName = voice.name.toLowerCase();
+      const lowerLang = voice.lang.toLowerCase();
+
+      if (!lowerLang.includes('es')) return false;
+
+      if (voiceGender === 'female') {
+        return lowerName.includes('female') ||
+               lowerName.includes('woman') ||
+               lowerName.includes('mónica') ||
+               lowerName.includes('lucia') ||
+               lowerName.includes('paulina');
+      } else {
+        return lowerName.includes('male') ||
+               lowerName.includes('man') ||
+               lowerName.includes('diego') ||
+               lowerName.includes('juan');
+      }
+    });
+
+    if (!selectedVoice) {
+      selectedVoice = voices.find(v => v.lang.toLowerCase().includes('es'));
+    }
+
+    if (selectedVoice) {
+      utterance.voice = selectedVoice;
+    }
+
+    utterance.rate = 1.0;
+    utterance.pitch = voiceGender === 'female' ? 1.1 : 0.9;
+    utterance.volume = 1.0;
+
+    window.speechSynthesis.speak(utterance);
+  };
 
   const handleSendMessage = async (content: string) => {
     if (!currentConversationId) {
@@ -45,8 +90,12 @@ export default function ChatInterface() {
     setLoading(true);
     setStreamingContent('');
 
+    // Detectar si el usuario quiere generar una imagen
+    const isImageRequest = /genera|crea|dibuja|haz|diseña|imagen|foto|picture|draw/i.test(content) &&
+                          /imagen|foto|dibujo|picture|image/i.test(content);
+
     try {
-      if (aiMode === 'image') {
+      if (isImageRequest) {
         // Generación de imagen
         const response = await fetch('/api/image', {
           method: 'POST',
@@ -125,6 +174,9 @@ export default function ChatInterface() {
             role: 'assistant',
             content: accumulatedContent,
           });
+
+          // Reproducir con voz automáticamente
+          speakResponse(accumulatedContent);
         }
         setStreamingContent('');
       }

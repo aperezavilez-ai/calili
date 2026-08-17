@@ -23,6 +23,9 @@ export function Sidebar() {
 
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editTitle, setEditTitle] = useState('');
+  const [showSettings, setShowSettings] = useState(false);
+
+  const { voiceEnabled, voiceGender, setVoiceEnabled, setVoiceGender } = useSettingsStore();
 
   const handleStartEdit = (id: string, title: string) => {
     setEditingId(id);
@@ -87,12 +90,61 @@ export function Sidebar() {
             <Menu className="w-5 h-5" />
           </button>
           <button
-            onClick={toggleDarkMode}
+            onClick={() => setShowSettings(!showSettings)}
             className="p-2 rounded-lg hover:bg-chat-hover transition-colors"
           >
-            {isDarkMode ? <Sun className="w-5 h-5" /> : <Moon className="w-5 h-5" />}
+            <Settings className="w-5 h-5" />
           </button>
         </div>
+
+        {/* Panel de configuración de voz */}
+        {showSettings && (
+          <div className="mb-4 p-4 rounded-lg bg-white/5 border border-white/10 space-y-3">
+            <h3 className="font-semibold text-sm mb-2">🔊 Configuración de Voz</h3>
+
+            <label className="flex items-center justify-between">
+              <span className="text-sm text-white/70">Respuestas con voz</span>
+              <button
+                onClick={() => setVoiceEnabled(!voiceEnabled)}
+                className={`relative w-11 h-6 rounded-full transition-colors ${
+                  voiceEnabled ? 'bg-purple-600' : 'bg-white/20'
+                }`}
+              >
+                <div className={`absolute top-1 left-1 w-4 h-4 bg-white rounded-full transition-transform ${
+                  voiceEnabled ? 'translate-x-5' : 'translate-x-0'
+                }`} />
+              </button>
+            </label>
+
+            {voiceEnabled && (
+              <div className="space-y-2">
+                <span className="text-xs text-white/50">Tipo de voz:</span>
+                <div className="flex gap-2">
+                  <button
+                    onClick={() => setVoiceGender('male')}
+                    className={`flex-1 px-3 py-2 rounded-lg text-sm transition-colors ${
+                      voiceGender === 'male'
+                        ? 'bg-blue-600 text-white'
+                        : 'bg-white/10 hover:bg-white/20'
+                    }`}
+                  >
+                    🎙️ Hombre
+                  </button>
+                  <button
+                    onClick={() => setVoiceGender('female')}
+                    className={`flex-1 px-3 py-2 rounded-lg text-sm transition-colors ${
+                      voiceGender === 'female'
+                        ? 'bg-pink-600 text-white'
+                        : 'bg-white/10 hover:bg-white/20'
+                    }`}
+                  >
+                    🎙️ Mujer
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+        )}
 
         <button
           onClick={createConversation}
