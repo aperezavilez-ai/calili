@@ -1,16 +1,16 @@
 'use client';
 
 import { useState, useRef, useEffect } from 'react';
-import { Send, Loader2, Mic, MicOff, Paperclip, Plus } from 'lucide-react';
+import { Send, Loader2, Mic, MicOff } from 'lucide-react';
 import { useSettingsStore } from '@/store/settings-store';
-import { useChatStore } from '@/store/chat-store';
 
 interface InputBoxProps {
-  onSendMessage: (message: string) => void;
+  onSendMessage: (message: string, mode: 'chat' | 'reasoning' | 'image') => void;
   isLoading: boolean;
 }
 
 export function InputBox({ onSendMessage, isLoading }: InputBoxProps) {
+  const { aiMode, setAIMode } = useSettingsStore();
   const [input, setInput] = useState('');
   const [isListening, setIsListening] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -51,7 +51,7 @@ export function InputBox({ onSendMessage, isLoading }: InputBoxProps) {
   const handleSubmit = () => {
     if (!input.trim() || isLoading) return;
 
-    onSendMessage(input.trim());
+    onSendMessage(input.trim(), aiMode);
     setInput('');
 
     if (textareaRef.current) {
@@ -84,6 +84,27 @@ export function InputBox({ onSendMessage, isLoading }: InputBoxProps) {
   return (
     <div className="border-t border-white/10 bg-chat-bg">
       <div className="max-w-3xl mx-auto px-4 py-4">
+        <div className="flex gap-2 mb-3" role="tablist" aria-label="Modo de Calili">
+          {[
+            ['chat', 'Chat'],
+            ['reasoning', 'Razonamiento'],
+            ['image', 'Imagen'],
+          ].map(([mode, label]) => (
+            <button
+              key={mode}
+              type="button"
+              role="tab"
+              aria-selected={aiMode === mode}
+              onClick={() => setAIMode(mode as 'chat' | 'reasoning' | 'image')}
+              disabled={isLoading}
+              className={`px-3 py-1.5 rounded-lg text-sm transition-colors ${
+                aiMode === mode ? 'bg-white text-black' : 'bg-white/10 text-white/70 hover:bg-white/20'
+              }`}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
         {/* Input Box estilo ChatGPT */}
         <div className="relative flex items-end gap-2 bg-[#40414f] rounded-3xl py-3 px-4 shadow-2xl border border-white/10">
           <textarea

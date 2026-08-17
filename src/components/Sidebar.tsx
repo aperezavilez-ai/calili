@@ -79,7 +79,7 @@ export function Sidebar() {
   }
 
   return (
-    <aside className="w-64 bg-chat-sidebar h-screen flex flex-col border-r border-white/10">
+    <aside className="fixed inset-y-0 left-0 z-40 w-[min(80vw,16rem)] bg-chat-sidebar flex flex-col border-r border-white/10 md:relative md:w-64">
       {/* Header */}
       <div className="p-4 border-b border-white/10">
         <div className="flex items-center justify-between mb-4">

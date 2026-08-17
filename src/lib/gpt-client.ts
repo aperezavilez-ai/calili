@@ -37,6 +37,16 @@ class GPTClient {
     this.apiKey = process.env.GPT_API_KEY || '';
   }
 
+  private async getError(response: Response): Promise<string> {
+    const body = await response.text();
+    try {
+      const parsed = JSON.parse(body);
+      return parsed.error?.message || parsed.message || body;
+    } catch {
+      return body || 'Error al comunicarse con GPT API';
+    }
+  }
+
   async chat(request: ChatCompletionRequest): Promise<ChatCompletionResponse> {
     const response = await fetch(this.apiUrl, {
       method: 'POST',
@@ -53,8 +63,7 @@ class GPTClient {
     });
 
     if (!response.ok) {
-      const error = await response.json();
-      throw new Error(error.message || 'Error al comunicarse con GPT API');
+      throw new Error(await this.getError(response));
     }
 
     return response.json();
@@ -77,8 +86,7 @@ class GPTClient {
     });
 
     if (!response.ok) {
-      const error = await response.json();
-      throw new Error(error.message || 'Error al comunicarse con GPT API');
+      throw new Error(await this.getError(response));
     }
 
     const reader = response.body?.getReader();

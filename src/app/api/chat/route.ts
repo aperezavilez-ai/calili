@@ -6,7 +6,14 @@ export const runtime = 'edge';
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json();
-    const { messages, mode } = body;
+    const { messages, mode, model } = body;
+
+    if (!Array.isArray(messages) || messages.some((message) => (
+      !message || !['user', 'assistant', 'system'].includes(message.role) ||
+      typeof message.content !== 'string'
+    ))) {
+      return NextResponse.json({ error: 'Los mensajes no tienen un formato válido' }, { status: 400 });
+    }
 
     // Modo de razonamiento: agregar instrucciones especiales
     const systemMessage = mode === 'reasoning'
@@ -26,7 +33,7 @@ export async function POST(req: NextRequest) {
     const stream = new ReadableStream({
       async start(controller) {
         try {
-          for await (const chunk of gptClient.chatStream({ messages: fullMessages })) {
+          for await (const chunk of gptClient.chatStream({ messages: fullMessages, model })) {
             controller.enqueue(encoder.encode(`data: ${JSON.stringify({ content: chunk })}\n\n`));
           }
           controller.enqueue(encoder.encode('data: [DONE]\n\n'));

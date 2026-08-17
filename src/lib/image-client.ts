@@ -22,6 +22,16 @@ class ImageClient {
     this.apiKey = process.env.GPT_API_KEY || '';
   }
 
+  private async getError(response: Response): Promise<string> {
+    const body = await response.text();
+    try {
+      const parsed = JSON.parse(body);
+      return parsed.error?.message || parsed.message || body;
+    } catch {
+      return body || 'Error al generar imagen';
+    }
+  }
+
   async generate(request: ImageGenerationRequest): Promise<ImageGenerationResponse> {
     const response = await fetch(this.apiUrl, {
       method: 'POST',
@@ -39,8 +49,7 @@ class ImageClient {
     });
 
     if (!response.ok) {
-      const error = await response.json();
-      throw new Error(error.message || 'Error al generar imagen');
+      throw new Error(await this.getError(response));
     }
 
     return response.json();
