@@ -1,11 +1,18 @@
 -- ============================================================================
 -- CALILI - Migraciones SQL para Supabase
+-- ESQUEMA SEPARADO: calili (NO COMPARTE CON OTROS PROYECTOS)
 -- ============================================================================
+
+-- Crear esquema dedicado para Calili
+CREATE SCHEMA IF NOT EXISTS calili;
+
+-- Establecer search_path para este esquema
+SET search_path TO calili, public;
 
 -- ----------------------------------------------------------------------------
 -- 1. TABLA: conversations (Conversaciones de chat)
 -- ----------------------------------------------------------------------------
-CREATE TABLE IF NOT EXISTS conversations (
+CREATE TABLE IF NOT EXISTS calili.conversations (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   user_id UUID NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
   title TEXT NOT NULL,
@@ -13,16 +20,16 @@ CREATE TABLE IF NOT EXISTS conversations (
   updated_at TIMESTAMPTZ DEFAULT NOW()
 );
 
-CREATE INDEX idx_conversations_user ON conversations(user_id, updated_at DESC);
+CREATE INDEX idx_conversations_user ON calili.conversations(user_id, updated_at DESC);
 
-COMMENT ON TABLE conversations IS 'Historial de conversaciones de cada usuario';
+COMMENT ON TABLE calili.conversations IS 'Historial de conversaciones de cada usuario';
 
 -- ----------------------------------------------------------------------------
 -- 2. TABLA: messages (Mensajes dentro de conversaciones)
 -- ----------------------------------------------------------------------------
-CREATE TABLE IF NOT EXISTS messages (
+CREATE TABLE IF NOT EXISTS calili.messages (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  conversation_id UUID NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+  conversation_id UUID NOT NULL REFERENCES calili.conversations(id) ON DELETE CASCADE,
   role TEXT NOT NULL CHECK (role IN ('user', 'assistant', 'system')),
   content TEXT NOT NULL,
   created_at TIMESTAMPTZ DEFAULT NOW()
