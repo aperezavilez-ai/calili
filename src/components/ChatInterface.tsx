@@ -140,14 +140,23 @@ export default function ChatInterface() {
 
         let webContext = '';
         if (wantsWeb) {
-          const searchResponse = await fetch('/api/search', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ query: content }),
-          });
-          if (searchResponse.ok) {
-            const searchData = await searchResponse.json();
-            webContext = searchData.context || '';
+          const searchController = new AbortController();
+          const searchTimeout = window.setTimeout(() => searchController.abort(), 3000);
+          try {
+            const searchResponse = await fetch('/api/search', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ query: content }),
+              signal: searchController.signal,
+            });
+            if (searchResponse.ok) {
+              const searchData = await searchResponse.json();
+              webContext = searchData.context || '';
+            }
+          } catch {
+            // La respuesta de Calili no debe quedar bloqueada por una búsqueda lenta.
+          } finally {
+            window.clearTimeout(searchTimeout);
           }
         }
 
@@ -243,7 +252,7 @@ export default function ChatInterface() {
   return (
     <div className="relative flex h-screen bg-chat-bg text-white overflow-hidden">
       <Sidebar />
-      <main className="flex-1 flex flex-col min-w-0 w-full">
+      <main className="flex-1 flex flex-col min-h-0 min-w-0 w-full">
         <MessageList messages={displayMessages} />
         <InputBox onSendMessage={handleSendMessage} isLoading={isLoading} />
       </main>

@@ -25,7 +25,8 @@ export async function POST(req: NextRequest) {
     ].filter(Boolean);
     const systemMessage = { role: 'system' as const, content: systemParts.join('\n\n') };
 
-    const fullMessages = [systemMessage, ...messages];
+    // Evita reenviar historiales enormes, que aumentan el tiempo hasta el primer token.
+    const fullMessages = [systemMessage, ...messages.slice(-20)];
 
     // Streaming response
     const encoder = new TextEncoder();

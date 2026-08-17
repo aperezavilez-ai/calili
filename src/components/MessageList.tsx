@@ -3,7 +3,7 @@
 import { Message } from '@/store/chat-store';
 import { useSettingsStore } from '@/store/settings-store';
 import { User, Bot, Volume2, VolumeX, Copy, Check } from 'lucide-react';
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
 import { vscDarkPlus } from 'react-syntax-highlighter/dist/esm/styles/prism';
@@ -15,8 +15,21 @@ interface MessageListProps {
 
 export function MessageList({ messages }: MessageListProps) {
   const { voiceEnabled, voiceGender } = useSettingsStore();
+  const scrollContainerRef = useRef<HTMLDivElement>(null);
   const [speakingId, setSpeakingId] = useState<string | null>(null);
   const [copiedId, setCopiedId] = useState<string | null>(null);
+
+  useEffect(() => {
+    const container = scrollContainerRef.current;
+    if (!container) return;
+
+    // Mantiene visible el mensaje actual también durante el streaming.
+    const frame = window.requestAnimationFrame(() => {
+      container.scrollTop = container.scrollHeight;
+    });
+
+    return () => window.cancelAnimationFrame(frame);
+  }, [messages]);
 
   const handleSpeak = (message: Message) => {
     if (speakingId === message.id) {
@@ -81,7 +94,7 @@ export function MessageList({ messages }: MessageListProps) {
   }
 
   return (
-    <div className="flex-1 overflow-y-auto">
+    <div ref={scrollContainerRef} className="min-h-0 flex-1 overflow-y-auto">
       <div className="max-w-3xl mx-auto px-4 py-6 space-y-8">
         {messages.map((message, index) => (
           <div

@@ -66,7 +66,7 @@ class GPTClient {
         ...request,
         model: this.model,
         temperature: request.temperature || 0.7,
-        max_tokens: request.max_tokens || 2000,
+        max_tokens: request.max_tokens || 1200,
       }),
     });
 
@@ -90,7 +90,7 @@ class GPTClient {
         stream: true,
         model: this.model,
         temperature: request.temperature || 0.7,
-        max_tokens: request.max_tokens || 2000,
+        max_tokens: request.max_tokens || 1200,
       }),
     });
 
