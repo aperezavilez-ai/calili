@@ -59,6 +59,7 @@ NEXT_PUBLIC_SUPABASE_ANON_KEY=tu_anon_key
 # API GPT (Tu proveedor)
 GPT_API_URL=https://api.openai.com/v1/chat/completions
 GPT_API_KEY=sk-tu-key-aqui
+GPT_MODEL=gpt-5.5
 
 # PWA
 NEXT_PUBLIC_APP_URL=https://calili.vercel.app

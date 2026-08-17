@@ -19,7 +19,7 @@ export default function ChatInterface() {
     toggleSidebar,
   } = useChatStore();
 
-  const { voiceEnabled, voiceGender, aiMode, selectedModel, imageSize } = useSettingsStore();
+  const { voiceEnabled, voiceGender, aiMode, imageSize } = useSettingsStore();
   const [streamingContent, setStreamingContent] = useState('');
 
   const currentConversation = conversations.find((c) => c.id === currentConversationId);
@@ -133,7 +133,7 @@ export default function ChatInterface() {
         const response = await fetch('/api/chat', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ messages: msgs, mode, model: selectedModel }),
+          body: JSON.stringify({ messages: msgs, mode }),
         });
 
         if (!response.ok) {
@@ -162,6 +162,7 @@ export default function ChatInterface() {
               if (data === '[DONE]') continue;
               try {
                 const parsed = JSON.parse(data);
+                if (parsed.error) throw new Error(parsed.error);
                 if (parsed.content) {
                   accumulatedContent += parsed.content;
                   setStreamingContent(accumulatedContent);

@@ -6,7 +6,7 @@ export const runtime = 'edge';
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json();
-    const { messages, mode, model } = body;
+    const { messages, mode } = body;
 
     if (!Array.isArray(messages) || messages.some((message) => (
       !message || !['user', 'assistant', 'system'].includes(message.role) ||
@@ -33,13 +33,16 @@ export async function POST(req: NextRequest) {
     const stream = new ReadableStream({
       async start(controller) {
         try {
-          for await (const chunk of gptClient.chatStream({ messages: fullMessages, model })) {
+          for await (const chunk of gptClient.chatStream({ messages: fullMessages })) {
             controller.enqueue(encoder.encode(`data: ${JSON.stringify({ content: chunk })}\n\n`));
           }
           controller.enqueue(encoder.encode('data: [DONE]\n\n'));
           controller.close();
         } catch (error: any) {
-          controller.error(error);
+          const message = error instanceof Error ? error.message : 'Error al comunicarse con la IA';
+          controller.enqueue(encoder.encode(`data: ${JSON.stringify({ error: message })}\n\n`));
+          controller.enqueue(encoder.encode('data: [DONE]\n\n'));
+          controller.close();
         }
       },
     });

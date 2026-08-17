@@ -25,6 +25,7 @@ NEXT_PUBLIC_SUPABASE_URL=https://xxxxx.supabase.co
 NEXT_PUBLIC_SUPABASE_ANON_KEY=eyJxxx...
 GPT_API_URL=https://api.openai.com/v1/chat/completions
 GPT_API_KEY=sk-xxx
+GPT_MODEL=gpt-5.5
 NEXT_PUBLIC_APP_URL=http://localhost:3000
 ```
 
@@ -65,6 +66,7 @@ NEXT_PUBLIC_SUPABASE_URL = https://xxxxx.supabase.co
 NEXT_PUBLIC_SUPABASE_ANON_KEY = eyJxxx...
 GPT_API_URL = https://api.openai.com/v1/chat/completions
 GPT_API_KEY = sk-xxx
+GPT_MODEL = gpt-5.5
 NEXT_PUBLIC_APP_URL = https://calili.vercel.app
 ```
 
@@ -86,6 +88,7 @@ vercel env add NEXT_PUBLIC_SUPABASE_URL
 vercel env add NEXT_PUBLIC_SUPABASE_ANON_KEY
 vercel env add GPT_API_URL
 vercel env add GPT_API_KEY
+vercel env add GPT_MODEL
 
 # Deploy a producción
 vercel --prod
@@ -195,6 +198,7 @@ Configurar secrets en GitHub:
   - `NEXT_PUBLIC_SUPABASE_ANON_KEY`
   - `GPT_API_URL`
   - `GPT_API_KEY`
+  - `GPT_MODEL`
 
 ---
 

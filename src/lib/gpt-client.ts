@@ -31,10 +31,17 @@ export interface ChatCompletionResponse {
 class GPTClient {
   private apiUrl: string;
   private apiKey: string;
+  private model: string;
 
   constructor() {
     this.apiUrl = process.env.GPT_API_URL || '';
     this.apiKey = process.env.GPT_API_KEY || '';
+    this.model = process.env.GPT_MODEL || 'gpt-5.5';
+  }
+
+  private validateConfig() {
+    if (!this.apiUrl) throw new Error('GPT_API_URL no está configurada');
+    if (!this.apiKey) throw new Error('GPT_API_KEY no está configurada');
   }
 
   private async getError(response: Response): Promise<string> {
@@ -48,6 +55,7 @@ class GPTClient {
   }
 
   async chat(request: ChatCompletionRequest): Promise<ChatCompletionResponse> {
+    this.validateConfig();
     const response = await fetch(this.apiUrl, {
       method: 'POST',
       headers: {
@@ -56,7 +64,7 @@ class GPTClient {
       },
       body: JSON.stringify({
         ...request,
-        model: request.model || 'gpt-4',
+        model: this.model,
         temperature: request.temperature || 0.7,
         max_tokens: request.max_tokens || 2000,
       }),
@@ -70,6 +78,7 @@ class GPTClient {
   }
 
   async *chatStream(request: ChatCompletionRequest): AsyncGenerator<string, void, unknown> {
+    this.validateConfig();
     const response = await fetch(this.apiUrl, {
       method: 'POST',
       headers: {
@@ -79,7 +88,7 @@ class GPTClient {
       body: JSON.stringify({
         ...request,
         stream: true,
-        model: request.model || 'gpt-4',
+        model: this.model,
         temperature: request.temperature || 0.7,
         max_tokens: request.max_tokens || 2000,
       }),
