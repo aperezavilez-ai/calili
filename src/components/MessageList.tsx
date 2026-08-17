@@ -97,19 +97,18 @@ export function MessageList({ messages }: MessageListProps) {
                   <ReactMarkdown
                     components={{
                       code(props) {
-                        const { node, className, children, ...rest } = props;
+                        const { className, children } = props;
                         const match = /language-(\w+)/.exec(className || '');
                         return match ? (
                           <SyntaxHighlighter
-                            style={vscDarkPlus}
+                            style={vscDarkPlus as any}
                             language={match[1]}
                             PreTag="div"
-                            {...rest}
                           >
                             {String(children).replace(/\n$/, '')}
                           </SyntaxHighlighter>
                         ) : (
-                          <code className={className} {...rest}>
+                          <code className={className}>
                             {children}
                           </code>
                         );
