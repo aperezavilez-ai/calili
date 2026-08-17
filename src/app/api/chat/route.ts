@@ -6,7 +6,7 @@ export const runtime = 'edge';
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json();
-    const { messages, mode } = body;
+    const { messages, webContext, wantsDocument } = body;
 
     if (!Array.isArray(messages) || messages.some((message) => (
       !message || !['user', 'assistant', 'system'].includes(message.role) ||
@@ -15,16 +15,13 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'Los mensajes no tienen un formato válido' }, { status: 400 });
     }
 
-    // Modo de razonamiento: agregar instrucciones especiales
-    const systemMessage = mode === 'reasoning'
-      ? {
-          role: 'system' as const,
-          content: 'Eres un asistente AI con capacidades de razonamiento profundo. Antes de responder, piensa paso a paso y explica tu proceso de razonamiento. Usa el formato:\n\n🤔 **Razonamiento:**\n[Tu proceso de pensamiento aquí]\n\n💡 **Respuesta:**\n[Tu respuesta final aquí]'
-        }
-      : {
-          role: 'system' as const,
-          content: 'Eres Calili, un asistente AI útil, amigable e inteligente. Respondes en español de forma clara y concisa.'
-        };
+    const systemParts = [
+      'Eres Calili, un asistente AI útil, amigable e inteligente. Respondes en español de forma clara y concisa.',
+      'Razona internamente antes de responder, pero no muestres cadenas de pensamiento privadas. Entrega conclusiones, pasos verificables y supuestos relevantes.',
+      wantsDocument ? 'El usuario pidió un documento. Produce contenido completo, bien estructurado y listo para guardar como archivo Markdown.' : '',
+      webContext ? `Usa estas fuentes recuperadas de la web. No inventes datos y menciona las URLs relevantes:\n\n${webContext}` : '',
+    ].filter(Boolean);
+    const systemMessage = { role: 'system' as const, content: systemParts.join('\n\n') };
 
     const fullMessages = [systemMessage, ...messages];
 

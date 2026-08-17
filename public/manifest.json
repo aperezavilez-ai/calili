@@ -3,7 +3,10 @@
   "short_name": "Calili",
   "description": "Asistente AI personal con interfaz ChatGPT. Disponible en web, iOS y Android.",
   "start_url": "/",
+  "id": "/",
+  "scope": "/",
   "display": "standalone",
+  "display_override": ["window-controls-overlay", "standalone"],
   "background_color": "#343541",
   "theme_color": "#343541",
   "orientation": "portrait-primary",
@@ -55,20 +58,6 @@
       "sizes": "512x512",
       "type": "image/png",
       "purpose": "any maskable"
-    }
-  ],
-  "screenshots": [
-    {
-      "src": "/screenshot-mobile.png",
-      "sizes": "390x844",
-      "type": "image/png",
-      "form_factor": "narrow"
-    },
-    {
-      "src": "/screenshot-desktop.png",
-      "sizes": "1920x1080",
-      "type": "image/png",
-      "form_factor": "wide"
     }
   ],
   "categories": ["productivity", "utilities"],

@@ -19,7 +19,7 @@ export default function ChatInterface() {
     toggleSidebar,
   } = useChatStore();
 
-  const { voiceEnabled, voiceGender, aiMode, imageSize } = useSettingsStore();
+  const { voiceEnabled, voiceGender, imageSize } = useSettingsStore();
   const [streamingContent, setStreamingContent] = useState('');
 
   const currentConversation = conversations.find((c) => c.id === currentConversationId);
@@ -82,7 +82,7 @@ export default function ChatInterface() {
     }
   };
 
-  const handleSendMessage = async (content: string, mode = aiMode) => {
+  const handleSendMessage = async (content: string) => {
     let convId = currentConversationId;
 
     if (!convId) {
@@ -94,10 +94,14 @@ export default function ChatInterface() {
     setLoading(true);
     setStreamingContent('');
 
-    const isImageRequest = mode === 'image';
+    const wantsImage = /\b(crea|genera|haz|dibuja|diseña|diseña)\b[\s\S]{0,80}\b(imagen|foto|dibujo|ilustraci[oó]n|retrato)\b/i.test(content) ||
+      /\b(imagen|foto|dibujo|ilustraci[oó]n)\b[\s\S]{0,80}\b(crea|genera|haz|dibuja)\b/i.test(content);
+    const wantsWeb = /\b(busca|buscar|internet|web|actual|hoy|noticias|noticia|precio|clima|cotizaci[oó]n|[uú]ltimas|reciente)\b/i.test(content);
+    const wantsVoice = /\b(habla|hablando|voz|en voz alta|lee|leer)\b/i.test(content);
+    const wantsDocument = /\b(crea|genera|haz|prepara|elabora|descarga)\b[\s\S]{0,100}\b(documento|archivo|informe|reporte|carta|curr[ií]culum|markdown|\.md|\.txt)\b/i.test(content);
 
     try {
-      if (isImageRequest) {
+      if (wantsImage) {
         const response = await fetch('/api/image', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -130,10 +134,23 @@ export default function ChatInterface() {
         // Incluir el mensaje del usuario actual
         msgs.push({ role: 'user', content });
 
+        let webContext = '';
+        if (wantsWeb) {
+          const searchResponse = await fetch('/api/search', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ query: content }),
+          });
+          if (searchResponse.ok) {
+            const searchData = await searchResponse.json();
+            webContext = searchData.context || '';
+          }
+        }
+
         const response = await fetch('/api/chat', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ messages: msgs, mode }),
+          body: JSON.stringify({ messages: msgs, webContext, wantsDocument }),
         });
 
         if (!response.ok) {
@@ -167,16 +184,27 @@ export default function ChatInterface() {
                   accumulatedContent += parsed.content;
                   setStreamingContent(accumulatedContent);
                 }
-              } catch {}
+              } catch (parseError) {
+                if (parseError instanceof Error && parseError.message) throw parseError;
+              }
             }
           }
         }
 
         if (accumulatedContent) {
           addMessage(convId, { role: 'assistant', content: accumulatedContent });
-          speakResponse(accumulatedContent);
+          if (wantsVoice || voiceEnabled) speakResponse(accumulatedContent);
+          if (wantsDocument) {
+            const blob = new Blob([accumulatedContent], { type: 'text/markdown;charset=utf-8' });
+            const url = URL.createObjectURL(blob);
+            const link = document.createElement('a');
+            link.href = url;
+            link.download = 'calili-documento.md';
+            link.click();
+            URL.revokeObjectURL(url);
+          }
         } else {
-          addMessage(convId, { role: 'assistant', content: '⚠️ No se recibió respuesta. Verifica que la API GPT esté configurada correctamente.' });
+          addMessage(convId, { role: 'assistant', content: '⚠️ La IA no devolvió contenido. Revisa la conexión del Gateway.' });
         }
         setStreamingContent('');
       }

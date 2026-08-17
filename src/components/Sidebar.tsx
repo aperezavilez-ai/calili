@@ -2,10 +2,43 @@
 
 import { useChatStore } from '@/store/chat-store';
 import { useSettingsStore } from '@/store/settings-store';
-import { MessageSquarePlus, Trash2, Edit2, Check, X, Menu, Sun, Moon, Settings } from 'lucide-react';
-import { useState } from 'react';
+import { MessageSquarePlus, Trash2, Edit2, Check, X, Menu, Settings, Download } from 'lucide-react';
+import { useEffect, useState } from 'react';
 import { format } from 'date-fns';
 import { es } from 'date-fns/locale';
+
+interface BeforeInstallPromptEvent extends Event {
+  prompt: () => Promise<void>;
+  userChoice: Promise<{ outcome: 'accepted' | 'dismissed' }>;
+}
+
+function usePwaInstall() {
+  const [installEvent, setInstallEvent] = useState<BeforeInstallPromptEvent | null>(null);
+
+  useEffect(() => {
+    const handleBeforeInstall = (event: Event) => {
+      event.preventDefault();
+      setInstallEvent(event as BeforeInstallPromptEvent);
+    };
+    const handleInstalled = () => setInstallEvent(null);
+
+    window.addEventListener('beforeinstallprompt', handleBeforeInstall);
+    window.addEventListener('appinstalled', handleInstalled);
+    return () => {
+      window.removeEventListener('beforeinstallprompt', handleBeforeInstall);
+      window.removeEventListener('appinstalled', handleInstalled);
+    };
+  }, []);
+
+  const install = async () => {
+    if (!installEvent) return;
+    await installEvent.prompt();
+    const choice = await installEvent.userChoice;
+    if (choice.outcome === 'accepted') setInstallEvent(null);
+  };
+
+  return { canInstall: Boolean(installEvent), install };
+}
 
 export function Sidebar() {
   const {
@@ -26,6 +59,7 @@ export function Sidebar() {
   const [showSettings, setShowSettings] = useState(false);
 
   const { voiceEnabled, voiceGender, setVoiceEnabled, setVoiceGender } = useSettingsStore();
+  const { canInstall, install } = usePwaInstall();
 
   const handleStartEdit = (id: string, title: string) => {
     setEditingId(id);
@@ -92,9 +126,20 @@ export function Sidebar() {
           <button
             onClick={() => setShowSettings(!showSettings)}
             className="p-2 rounded-lg hover:bg-chat-hover transition-colors"
+            title="Configuración"
           >
             <Settings className="w-5 h-5" />
           </button>
+          {canInstall && (
+            <button
+              onClick={install}
+              className="p-2 rounded-lg hover:bg-chat-hover transition-colors text-cyan-300"
+              title="Instalar Calili"
+              aria-label="Instalar Calili"
+            >
+              <Download className="w-5 h-5" />
+            </button>
+          )}
         </div>
 
         {/* Panel de configuración de voz */}
