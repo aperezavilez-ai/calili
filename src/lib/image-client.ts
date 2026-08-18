@@ -33,26 +33,36 @@ class ImageClient {
   }
 
   async generate(request: ImageGenerationRequest): Promise<ImageGenerationResponse> {
-    const response = await fetch(this.apiUrl, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${this.apiKey}`,
-      },
-      body: JSON.stringify({
-        prompt: request.prompt,
-        size: request.size || '1024x1024',
-        quality: request.quality || 'standard',
-        n: request.n || 1,
-        model: 'dall-e-3',
-      }),
-    });
+    if (!this.apiUrl) throw new Error('El proveedor de imágenes no está configurado.');
 
-    if (!response.ok) {
-      throw new Error(await this.getError(response));
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 5000);
+
+    try {
+      const response = await fetch(this.apiUrl, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${this.apiKey}`,
+        },
+        body: JSON.stringify({
+          prompt: request.prompt,
+          size: request.size || '1024x1024',
+          quality: request.quality || 'standard',
+          n: request.n || 1,
+          model: 'dall-e-3',
+        }),
+        signal: controller.signal,
+      });
+
+      if (!response.ok) {
+        throw new Error(await this.getError(response));
+      }
+
+      return response.json();
+    } finally {
+      clearTimeout(timeout);
     }
-
-    return response.json();
   }
 }
 

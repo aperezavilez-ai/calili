@@ -67,6 +67,7 @@ export default function ChatInterface() {
   };
 
   const handleSendMessage = async (content: string, files: File[] = []) => {
+    voiceService.stop();
     let convId = currentConversationId;
 
     if (!convId) {
@@ -80,11 +81,17 @@ export default function ChatInterface() {
     setStreamingContent('');
     cancelRequestedRef.current = false;
 
-    const wantsImage = /\b(crea|genera|haz|dibuja|diseña|diseña)\b[\s\S]{0,80}\b(imagen|foto|dibujo|ilustraci[oó]n|retrato|flyer|cartel|p[oó]ster)\b/i.test(content) ||
-      /\b(imagen|foto|dibujo|ilustraci[oó]n)\b[\s\S]{0,80}\b(crea|genera|haz|dibuja)\b/i.test(content);
+    const normalizedIntent = content.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
+    const creativeAction = '(?:crea(?:r|me)?|genera(?:r|me)?|haz(?:me)?|hacer|dibuja(?:r|me)?|disena(?:r|me)?)';
+    const imageTarget = '(?:imagen|foto|dibujo|ilustracion|retrato|flyer|cartel|poster)';
+    const wantsImage = new RegExp(`\\b${creativeAction}\\b[\\s\\S]{0,100}\\b${imageTarget}\\b`).test(normalizedIntent) ||
+      new RegExp(`\\b${imageTarget}\\b[\\s\\S]{0,100}\\b${creativeAction}\\b`).test(normalizedIntent);
     const wantsWeb = /\b(busca|buscar|internet|web|actual|hoy|noticias|noticia|precio|clima|cotizaci[oó]n|[uú]ltimas|reciente)\b/i.test(content);
     const wantsVoice = /\b(habla|hablando|voz|en voz alta|lee|leer)\b/i.test(content);
-    const wantsDocument = /\b(crea|genera|haz|prepara|elabora|descarga)\b[\s\S]{0,100}\b(documento|archivo|informe|reporte|carta|curr[ií]culum|markdown|\.md|\.txt|pdf|word|docx)\b/i.test(content);
+    const documentAction = '(?:crea(?:r|me)?|genera(?:r|me)?|haz(?:me)?|prepara(?:r|me)?|elabora(?:r|me)?|descarga(?:r|me)?)';
+    const documentTarget = '(?:documento|archivo|informe|reporte|carta|curriculum|markdown|\\.md|\\.txt|pdf|word|docx)';
+    const wantsDocument = new RegExp(`\\b${documentAction}\\b[\\s\\S]{0,120}\\b${documentTarget}\\b`).test(normalizedIntent) ||
+      new RegExp(`\\b${documentTarget}\\b[\\s\\S]{0,120}\\b${documentAction}\\b`).test(normalizedIntent);
     const requestedFormat: 'md' | 'pdf' | 'docx' = /\b(pdf)\b/i.test(content) ? 'pdf' : /\b(word|docx)\b/i.test(content) ? 'docx' : 'md';
 
     let requestTimeout: number | null = null;
@@ -246,6 +253,7 @@ export default function ChatInterface() {
   const stopResponse = () => {
     cancelRequestedRef.current = true;
     activeRequestControllerRef.current?.abort();
+    voiceService.stop();
     setStreamingContent('');
     setLoading(false);
   };
@@ -270,7 +278,7 @@ export default function ChatInterface() {
     <div className="relative flex h-screen bg-chat-bg text-white overflow-hidden">
       <Sidebar />
       <main className="flex-1 flex flex-col min-h-0 min-w-0 w-full">
-        <MessageList messages={displayMessages} onDownload={downloadGeneratedFile} />
+        <MessageList messages={displayMessages} />
         <InputBox onSendMessage={handleSendMessage} onStopMessage={stopResponse} isLoading={isLoading} />
       </main>
     </div>

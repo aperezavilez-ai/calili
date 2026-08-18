@@ -6,6 +6,7 @@ import { MessageSquarePlus, Trash2, Edit2, Check, X, Menu, Settings, Download } 
 import { useEffect, useState } from 'react';
 import { format } from 'date-fns';
 import { es } from 'date-fns/locale';
+import { voiceService } from '@/lib/voice-service';
 
 interface BeforeInstallPromptEvent extends Event {
   prompt: () => Promise<void>;
@@ -60,6 +61,11 @@ export function Sidebar() {
 
   const { voiceEnabled, voiceGender, setVoiceEnabled, setVoiceGender } = useSettingsStore();
   const { canInstall, install } = usePwaInstall();
+
+  const toggleVoice = () => {
+    if (voiceEnabled) voiceService.stop();
+    setVoiceEnabled(!voiceEnabled);
+  };
 
   const handleStartEdit = (id: string, title: string) => {
     setEditingId(id);
@@ -150,7 +156,7 @@ export function Sidebar() {
             <label className="flex items-center justify-between">
               <span className="text-sm text-white/70">Respuestas con voz</span>
               <button
-                onClick={() => setVoiceEnabled(!voiceEnabled)}
+                onClick={toggleVoice}
                 className={`relative w-11 h-6 rounded-full transition-colors ${
                   voiceEnabled ? 'bg-purple-600' : 'bg-white/20'
                 }`}

@@ -1,24 +1,18 @@
 'use client';
 
 import { Message } from '@/store/chat-store';
-import { useSettingsStore } from '@/store/settings-store';
-import { User, Bot, Volume2, VolumeX, Copy, Check, Download } from 'lucide-react';
-import { useEffect, useRef, useState } from 'react';
+import { User } from 'lucide-react';
+import { useEffect, useRef } from 'react';
 import ReactMarkdown from 'react-markdown';
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
 import { vscDarkPlus } from 'react-syntax-highlighter/dist/esm/styles/prism';
-import { voiceService } from '@/lib/voice-service';
 
 interface MessageListProps {
   messages: Message[];
-  onDownload: (content: string, format: 'md' | 'pdf' | 'docx') => void;
 }
 
-export function MessageList({ messages, onDownload }: MessageListProps) {
-  const { voiceEnabled, voiceGender } = useSettingsStore();
+export function MessageList({ messages }: MessageListProps) {
   const scrollContainerRef = useRef<HTMLDivElement>(null);
-  const [speakingId, setSpeakingId] = useState<string | null>(null);
-  const [copiedId, setCopiedId] = useState<string | null>(null);
 
   useEffect(() => {
     const container = scrollContainerRef.current;
@@ -31,22 +25,6 @@ export function MessageList({ messages, onDownload }: MessageListProps) {
 
     return () => window.cancelAnimationFrame(frame);
   }, [messages]);
-
-  const handleSpeak = (message: Message) => {
-    if (speakingId === message.id) {
-      voiceService.stop();
-      setSpeakingId(null);
-    } else {
-      voiceService.speak(message.content, voiceGender);
-      setSpeakingId(message.id);
-    }
-  };
-
-  const handleCopy = async (content: string, id: string) => {
-    await navigator.clipboard.writeText(content);
-    setCopiedId(id);
-    setTimeout(() => setCopiedId(null), 2000);
-  };
 
   if (messages.length === 0) {
     return (
@@ -64,31 +42,6 @@ export function MessageList({ messages, onDownload }: MessageListProps) {
             ¿En qué puedo ayudarte hoy?
           </p>
 
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 max-w-2xl mx-auto">
-            <button className="group p-4 rounded-2xl bg-white/5 hover:bg-white/10 border border-white/10 hover:border-white/20 transition-all text-left">
-              <div className="text-2xl mb-2">💬</div>
-              <h3 className="font-semibold mb-1 text-white group-hover:text-purple-400 transition-colors">Conversación natural</h3>
-              <p className="text-sm text-white/60">Responde preguntas, escribe código, ayuda con tareas</p>
-            </button>
-
-            <button className="group p-4 rounded-2xl bg-white/5 hover:bg-white/10 border border-white/10 hover:border-white/20 transition-all text-left">
-              <div className="text-2xl mb-2">🎨</div>
-              <h3 className="font-semibold mb-1 text-white group-hover:text-pink-400 transition-colors">Generación de imágenes</h3>
-              <p className="text-sm text-white/60">Crea imágenes únicas con DALL-E 3</p>
-            </button>
-
-            <button className="group p-4 rounded-2xl bg-white/5 hover:bg-white/10 border border-white/10 hover:border-white/20 transition-all text-left">
-              <div className="text-2xl mb-2">🧠</div>
-              <h3 className="font-semibold mb-1 text-white group-hover:text-orange-400 transition-colors">Razonamiento profundo</h3>
-              <p className="text-sm text-white/60">Análisis detallado paso a paso</p>
-            </button>
-
-            <button className="group p-4 rounded-2xl bg-white/5 hover:bg-white/10 border border-white/10 hover:border-white/20 transition-all text-left">
-              <div className="text-2xl mb-2">🔊</div>
-              <h3 className="font-semibold mb-1 text-white group-hover:text-blue-400 transition-colors">Síntesis de voz</h3>
-              <p className="text-sm text-white/60">Escucha las respuestas en español</p>
-            </button>
-          </div>
         </div>
       </div>
     );
@@ -175,46 +128,6 @@ export function MessageList({ messages, onDownload }: MessageListProps) {
                   </div>
                 )}
               </div>
-
-              {/* Actions */}
-              {message.role === 'assistant' && (
-                <div className="flex items-center gap-1 pt-2">
-                  {voiceEnabled && (
-                    <button
-                      onClick={() => handleSpeak(message)}
-                      className="p-2 rounded-lg hover:bg-white/5 transition-colors group"
-                      title="Leer en voz alta"
-                    >
-                      {speakingId === message.id ? (
-                        <VolumeX className="w-4 h-4 text-white/60" />
-                      ) : (
-                        <Volume2 className="w-4 h-4 text-white/40 group-hover:text-white/60" />
-                      )}
-                    </button>
-                  )}
-                  <button
-                    onClick={() => handleCopy(message.content, message.id)}
-                    className="p-2 rounded-lg hover:bg-white/5 transition-colors group"
-                    title="Copiar"
-                  >
-                    {copiedId === message.id ? (
-                      <Check className="w-4 h-4 text-green-400" />
-                    ) : (
-                      <Copy className="w-4 h-4 text-white/40 group-hover:text-white/60" />
-                    )}
-                  </button>
-                  {message.id !== 'loading' && message.id !== 'streaming' && (
-                    <>
-                      {(['pdf', 'docx', 'md'] as const).map((format) => (
-                        <button key={format} onClick={() => onDownload(message.content, format)} className="flex items-center gap-1 rounded-lg px-2 py-1.5 text-xs text-white/40 transition-colors hover:bg-white/5 hover:text-white/70" title={`Descargar ${format === 'docx' ? 'Word' : format.toUpperCase()}`}>
-                          <Download className="h-3.5 w-3.5" />
-                          {format === 'docx' ? 'Word' : format.toUpperCase()}
-                        </button>
-                      ))}
-                    </>
-                  )}
-                </div>
-              )}
             </div>
           </div>
         ))}

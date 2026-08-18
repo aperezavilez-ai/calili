@@ -80,6 +80,25 @@ export function InputBox({ onSendMessage, onStopMessage, isLoading }: InputBoxPr
     event.target.value = '';
   };
 
+  const handlePaste = (event: React.ClipboardEvent<HTMLTextAreaElement>) => {
+    const pastedImages = Array.from(event.clipboardData.items)
+      .filter((item) => item.kind === 'file' && item.type.startsWith('image/'))
+      .map((item, index) => {
+        const image = item.getAsFile();
+        if (!image) return null;
+        const extension = image.type.split('/')[1]?.replace('jpeg', 'jpg') || 'png';
+        return new File([image], `captura-${Date.now()}-${index + 1}.${extension}`, {
+          type: image.type,
+          lastModified: Date.now(),
+        });
+      })
+      .filter((file): file is File => Boolean(file));
+
+    if (pastedImages.length === 0) return;
+    event.preventDefault();
+    setAttachments((current) => [...current, ...pastedImages].slice(0, 4));
+  };
+
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
@@ -133,6 +152,7 @@ export function InputBox({ onSendMessage, onStopMessage, isLoading }: InputBoxPr
             value={input}
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={handleKeyDown}
+            onPaste={handlePaste}
             placeholder="Envía un mensaje a Calili..."
             className="flex-1 bg-transparent outline-none resize-none max-h-[200px] min-h-[24px] text-white placeholder:text-white/40 leading-relaxed"
             rows={1}
