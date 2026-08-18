@@ -14,6 +14,7 @@ export interface ChatCompletionRequest {
   temperature?: number;
   max_tokens?: number;
   stream?: boolean;
+  signal?: AbortSignal;
 }
 
 export interface ChatCompletionResponse {
@@ -62,7 +63,7 @@ class GPTClient {
 
   async chat(request: ChatCompletionRequest): Promise<ChatCompletionResponse> {
     this.validateConfig();
-    const { providerId, ...payload } = request;
+    const { providerId, signal, ...payload } = request;
     const requestBody = {
       ...payload,
       ...(this.model ? { model: this.model } : {}),
@@ -77,6 +78,7 @@ class GPTClient {
         ...(providerId ? { 'x-provider-id': providerId } : {}),
       },
       body: JSON.stringify(requestBody),
+      signal,
     });
 
     if (!response.ok) {
@@ -88,7 +90,7 @@ class GPTClient {
 
   async *chatStream(request: ChatCompletionRequest): AsyncGenerator<string, void, unknown> {
     this.validateConfig();
-    const { providerId, ...payload } = request;
+    const { providerId, signal, ...payload } = request;
     const requestBody = {
       ...payload,
       stream: true,
@@ -104,6 +106,7 @@ class GPTClient {
         ...(providerId ? { 'x-provider-id': providerId } : {}),
       },
       body: JSON.stringify(requestBody),
+      signal,
     });
 
     if (!response.ok) {

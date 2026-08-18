@@ -4,6 +4,23 @@ import { gptClient } from '@/lib/gpt-client';
 export const runtime = 'edge';
 
 const APICREDITS_PROVIDER_ID = '434f5189-a77b-4d72-be15-bb927d0c8e0a';
+const MEAI_PROVIDER_ID = 'edb19447-28b4-4955-8eec-fcc5f9663321';
+const FIRST_TOKEN_TIMEOUT_MS = 7000;
+
+function compactMessages(messages: Array<{
+  role: 'user' | 'assistant' | 'system';
+  content: string | Array<{ type: 'text' | 'image_url'; text?: string; image_url?: { url: string } }>;
+}>) {
+  const systemMessage = messages[0]?.role === 'system' ? [messages[0]] : [];
+  const conversationMessages = messages[0]?.role === 'system' ? messages.slice(1) : messages;
+  return [...systemMessage, ...conversationMessages.slice(-11)].map((message) => {
+    if (typeof message.content !== 'string') return message;
+    const content = message.role === 'assistant'
+      ? message.content.replace(/!\[[^\]]*\]\([^)]*\)/g, '[Imagen generada]')
+      : message.content;
+    return { ...message, content: content.slice(-6000) };
+  });
+}
 
 export async function POST(req: NextRequest) {
   try {
@@ -28,10 +45,10 @@ export async function POST(req: NextRequest) {
     const systemMessage = { role: 'system' as const, content: systemParts.join('\n\n') };
 
     // Evita reenviar historiales enormes, que aumentan el tiempo hasta el primer token.
-    const fullMessages = [systemMessage, ...messages.slice(-20)] as Array<{
+    const fullMessages = compactMessages([systemMessage, ...messages] as Array<{
       role: 'user' | 'assistant' | 'system';
       content: string | Array<{ type: 'text' | 'image_url'; text?: string; image_url?: { url: string } }>;
-    }>;
+    }>);
 
     if (typeof imageData === 'string' && imageData.startsWith('data:image/')) {
       const lastMessage = fullMessages[fullMessages.length - 1];
@@ -49,11 +66,61 @@ export async function POST(req: NextRequest) {
       async start(controller) {
         try {
           controller.enqueue(encoder.encode(`data: ${JSON.stringify({ status: 'preparing' })}\n\n`));
-          for await (const chunk of gptClient.chatStream({
-            messages: fullMessages,
-            ...(imageData ? { model: 'gpt-5.5', providerId: APICREDITS_PROVIDER_ID } : {}),
-          })) {
-            controller.enqueue(encoder.encode(`data: ${JSON.stringify({ content: chunk })}\n\n`));
+          let deliveredContent = false;
+          let lastError: unknown;
+          const providers = imageData
+            ? [{ id: APICREDITS_PROVIDER_ID, model: 'gpt-5.5' }]
+            : [
+              { id: MEAI_PROVIDER_ID, model: 'kimi-k2.6' },
+              { id: APICREDITS_PROVIDER_ID, model: 'claude-sonnet-5' },
+            ];
+
+          for (const provider of providers) {
+            const requestController = new AbortController();
+            let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
+            try {
+              const stream = gptClient.chatStream({
+                messages: fullMessages,
+                max_tokens: 1000,
+                model: provider.model,
+                providerId: provider.id,
+                signal: requestController.signal,
+              });
+              const iterator = stream[Symbol.asyncIterator]();
+              let waitingForFirstToken = true;
+
+              while (true) {
+                const nextChunk = iterator.next();
+                const result = waitingForFirstToken
+                  ? await Promise.race([
+                    nextChunk,
+                    new Promise<never>((_, reject) => {
+                      timeoutHandle = setTimeout(() => reject(new Error('El proveedor tardó demasiado en responder.')), FIRST_TOKEN_TIMEOUT_MS);
+                    }),
+                  ])
+                  : await nextChunk;
+
+                if (result.done) break;
+                if (result.value) {
+                  waitingForFirstToken = false;
+                  deliveredContent = true;
+                  controller.enqueue(encoder.encode(`data: ${JSON.stringify({ content: result.value })}\n\n`));
+                }
+              }
+              lastError = undefined;
+              break;
+            } catch (providerError) {
+              lastError = providerError;
+              requestController.abort();
+              if (deliveredContent) throw providerError;
+            } finally {
+              if (timeoutHandle) clearTimeout(timeoutHandle);
+              requestController.abort();
+            }
+          }
+
+          if (!deliveredContent && lastError) {
+            throw lastError;
           }
           controller.enqueue(encoder.encode('data: [DONE]\n\n'));
           controller.close();

@@ -86,6 +86,7 @@ export default function ChatInterface() {
     const imageTarget = '(?:imagen|foto|dibujo|ilustracion|retrato|flyer|cartel|poster)';
     const wantsImage = new RegExp(`\\b${creativeAction}\\b[\\s\\S]{0,100}\\b${imageTarget}\\b`).test(normalizedIntent) ||
       new RegExp(`\\b${imageTarget}\\b[\\s\\S]{0,100}\\b${creativeAction}\\b`).test(normalizedIntent);
+    const wantsFlyer = /\\b(flyer|cartel|poster|p[oó]ster)\\b/i.test(content);
     const wantsWeb = /\b(busca|buscar|internet|web|actual|hoy|noticias|noticia|precio|clima|cotizaci[oó]n|[uú]ltimas|reciente)\b/i.test(content);
     const wantsVoice = /\b(habla|hablando|voz|en voz alta|lee|leer)\b/i.test(content);
     const documentAction = '(?:crea(?:r|me)?|genera(?:r|me)?|haz(?:me)?|prepara(?:r|me)?|elabora(?:r|me)?|descarga(?:r|me)?)';
@@ -119,7 +120,7 @@ export default function ChatInterface() {
         const response = await fetch('/api/image', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ prompt: content, size: imageSize, quality: 'hd' }),
+          body: JSON.stringify({ prompt: content, size: imageSize, quality: 'hd', flyer: wantsFlyer }),
         });
 
         if (!response.ok) {
