@@ -2,7 +2,7 @@
 
 import { Message } from '@/store/chat-store';
 import { useSettingsStore } from '@/store/settings-store';
-import { User, Bot, Volume2, VolumeX, Copy, Check } from 'lucide-react';
+import { User, Bot, Volume2, VolumeX, Copy, Check, Download } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
@@ -11,9 +11,10 @@ import { voiceService } from '@/lib/voice-service';
 
 interface MessageListProps {
   messages: Message[];
+  onDownload: (content: string, format: 'md' | 'pdf' | 'docx') => void;
 }
 
-export function MessageList({ messages }: MessageListProps) {
+export function MessageList({ messages, onDownload }: MessageListProps) {
   const { voiceEnabled, voiceGender } = useSettingsStore();
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const [speakingId, setSpeakingId] = useState<string | null>(null);
@@ -132,7 +133,13 @@ export function MessageList({ messages }: MessageListProps) {
                   ? 'text-white/90'
                   : 'text-white/95'
               }`}>
-                {message.role === 'user' ? (
+                {message.id === 'loading' ? (
+                  <div className="flex items-center gap-1 py-1" aria-label="Calili está pensando">
+                    <span className="h-2 w-2 animate-bounce rounded-full bg-white/80 [animation-delay:-0.3s]" />
+                    <span className="h-2 w-2 animate-bounce rounded-full bg-white/80 [animation-delay:-0.15s]" />
+                    <span className="h-2 w-2 animate-bounce rounded-full bg-white/80" />
+                  </div>
+                ) : message.role === 'user' ? (
                   <p className="whitespace-pre-wrap leading-relaxed">{message.content}</p>
                 ) : (
                   <div className="prose prose-invert max-w-none prose-p:leading-relaxed prose-pre:bg-black/20 prose-pre:border prose-pre:border-white/10">
@@ -196,6 +203,16 @@ export function MessageList({ messages }: MessageListProps) {
                       <Copy className="w-4 h-4 text-white/40 group-hover:text-white/60" />
                     )}
                   </button>
+                  {message.id !== 'loading' && message.id !== 'streaming' && (
+                    <>
+                      {(['pdf', 'docx', 'md'] as const).map((format) => (
+                        <button key={format} onClick={() => onDownload(message.content, format)} className="flex items-center gap-1 rounded-lg px-2 py-1.5 text-xs text-white/40 transition-colors hover:bg-white/5 hover:text-white/70" title={`Descargar ${format === 'docx' ? 'Word' : format.toUpperCase()}`}>
+                          <Download className="h-3.5 w-3.5" />
+                          {format === 'docx' ? 'Word' : format.toUpperCase()}
+                        </button>
+                      ))}
+                    </>
+                  )}
                 </div>
               )}
             </div>

@@ -6,6 +6,7 @@ import { useSettingsStore } from '@/store/settings-store';
 import { Sidebar } from '@/components/Sidebar';
 import { MessageList } from '@/components/MessageList';
 import { InputBox } from '@/components/InputBox';
+import { voiceService } from '@/lib/voice-service';
 
 export default function ChatInterface() {
   const {
@@ -39,77 +40,74 @@ export default function ChatInterface() {
   }, [isSidebarOpen, toggleSidebar]);
 
   const speakResponse = (text: string) => {
-    if (!voiceEnabled || typeof window === 'undefined' || !window.speechSynthesis) return;
-
-    window.speechSynthesis.cancel();
-
-    // Limpiar markdown para la voz
-    const cleanText = text
-      .replace(/!\[.*?\]\(.*?\)/g, 'imagen generada')
-      .replace(/\[.*?\]\(.*?\)/g, '')
-      .replace(/#{1,6}\s/g, '')
-      .replace(/\*\*/g, '')
-      .replace(/\*/g, '')
-      .replace(/`/g, '')
-      .substring(0, 500); // Limitar longitud para voz
-
-    const utterance = new SpeechSynthesisUtterance(cleanText);
-
-    const loadVoices = () => {
-      const voices = window.speechSynthesis.getVoices();
-      let selectedVoice = voices.find(voice => {
-        const lowerName = voice.name.toLowerCase();
-        const lowerLang = voice.lang.toLowerCase();
-        if (!lowerLang.includes('es')) return false;
-        if (voiceGender === 'female') {
-          return lowerName.includes('female') || lowerName.includes('woman') ||
-                 lowerName.includes('mónica') || lowerName.includes('lucia') || lowerName.includes('paulina');
-        } else {
-          return lowerName.includes('male') || lowerName.includes('man') ||
-                 lowerName.includes('diego') || lowerName.includes('juan');
-        }
-      });
-
-      if (!selectedVoice) {
-        selectedVoice = voices.find(v => v.lang.toLowerCase().includes('es'));
-      }
-
-      if (selectedVoice) utterance.voice = selectedVoice;
-      utterance.rate = 1.0;
-      utterance.pitch = voiceGender === 'female' ? 1.1 : 0.9;
-      utterance.volume = 1.0;
-      window.speechSynthesis.speak(utterance);
-    };
-
-    if (window.speechSynthesis.getVoices().length > 0) {
-      loadVoices();
-    } else {
-      window.speechSynthesis.onvoiceschanged = loadVoices;
-    }
+    if (voiceEnabled) voiceService.speak(text, voiceGender);
   };
 
-  const handleSendMessage = async (content: string) => {
+  const readImageAsDataUrl = (file: File) => new Promise<string>((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result));
+    reader.onerror = () => reject(new Error(`No se pudo leer ${file.name}.`));
+    reader.readAsDataURL(file);
+  });
+
+  const downloadGeneratedFile = async (content: string, format: 'md' | 'pdf' | 'docx') => {
+    const response = await fetch('/api/export', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ content, format, title: 'calili-documento' }),
+    });
+    if (!response.ok) throw new Error('No se pudo generar el archivo descargable.');
+    const blob = await response.blob();
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `calili-documento.${format}`;
+    link.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const handleSendMessage = async (content: string, files: File[] = []) => {
     let convId = currentConversationId;
 
     if (!convId) {
       convId = createConversation();
     }
 
-    addMessage(convId, { role: 'user', content });
+    const fileLabel = files.length ? `\n\nAdjuntos: ${files.map((file) => file.name).join(', ')}` : '';
+    addMessage(convId, { role: 'user', content: `${content}${fileLabel}` });
 
     setLoading(true);
     setStreamingContent('');
     cancelRequestedRef.current = false;
 
-    const wantsImage = /\b(crea|genera|haz|dibuja|diseña|diseña)\b[\s\S]{0,80}\b(imagen|foto|dibujo|ilustraci[oó]n|retrato)\b/i.test(content) ||
+    const wantsImage = /\b(crea|genera|haz|dibuja|diseña|diseña)\b[\s\S]{0,80}\b(imagen|foto|dibujo|ilustraci[oó]n|retrato|flyer|cartel|p[oó]ster)\b/i.test(content) ||
       /\b(imagen|foto|dibujo|ilustraci[oó]n)\b[\s\S]{0,80}\b(crea|genera|haz|dibuja)\b/i.test(content);
     const wantsWeb = /\b(busca|buscar|internet|web|actual|hoy|noticias|noticia|precio|clima|cotizaci[oó]n|[uú]ltimas|reciente)\b/i.test(content);
     const wantsVoice = /\b(habla|hablando|voz|en voz alta|lee|leer)\b/i.test(content);
-    const wantsDocument = /\b(crea|genera|haz|prepara|elabora|descarga)\b[\s\S]{0,100}\b(documento|archivo|informe|reporte|carta|curr[ií]culum|markdown|\.md|\.txt)\b/i.test(content);
+    const wantsDocument = /\b(crea|genera|haz|prepara|elabora|descarga)\b[\s\S]{0,100}\b(documento|archivo|informe|reporte|carta|curr[ií]culum|markdown|\.md|\.txt|pdf|word|docx)\b/i.test(content);
+    const requestedFormat: 'md' | 'pdf' | 'docx' = /\b(pdf)\b/i.test(content) ? 'pdf' : /\b(word|docx)\b/i.test(content) ? 'docx' : 'md';
 
     let requestTimeout: number | null = null;
 
     try {
+      let modelContent = content;
+      let imageData = '';
+      if (files.length > 0) {
+        const formData = new FormData();
+        files.forEach((file) => formData.append('files', file));
+        const fileResponse = await fetch('/api/files', { method: 'POST', body: formData });
+        if (!fileResponse.ok) {
+          const errorData = await fileResponse.json().catch(() => ({}));
+          throw new Error(errorData.error || 'No se pudieron analizar los archivos.');
+        }
+        const fileData = await fileResponse.json();
+        const extracted = (fileData.attachments ?? []) as Array<{ name: string; text?: string; analyzableImage?: boolean }>;
+        const extractedText = extracted.filter((file) => file.text).map((file) => `--- ${file.name} ---\n${file.text}`).join('\n\n');
+        if (extractedText) modelContent += `\n\nContenido extraído de los archivos:\n${extractedText}`;
+        const imageFile = files.find((file) => file.type.startsWith('image/') && file.size <= 3 * 1024 * 1024);
+        if (imageFile) imageData = await readImageAsDataUrl(imageFile);
+      }
+
       if (wantsImage) {
         const response = await fetch('/api/image', {
           method: 'POST',
@@ -141,7 +139,7 @@ export default function ChatInterface() {
         }));
 
         // Incluir el mensaje del usuario actual
-        msgs.push({ role: 'user', content });
+        msgs.push({ role: 'user', content: modelContent });
 
         let webContext = '';
         if (wantsWeb) {
@@ -171,7 +169,7 @@ export default function ChatInterface() {
         const response = await fetch('/api/chat', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ messages: msgs, webContext, wantsDocument }),
+          body: JSON.stringify({ messages: msgs, webContext, wantsDocument, imageData }),
           signal: chatController.signal,
         });
 
@@ -217,15 +215,7 @@ export default function ChatInterface() {
           const finalContent = normalizeCaliliResponse(accumulatedContent);
           addMessage(convId, { role: 'assistant', content: finalContent });
           if (wantsVoice || voiceEnabled) speakResponse(finalContent);
-          if (wantsDocument) {
-            const blob = new Blob([finalContent], { type: 'text/markdown;charset=utf-8' });
-            const url = URL.createObjectURL(blob);
-            const link = document.createElement('a');
-            link.href = url;
-            link.download = 'calili-documento.md';
-            link.click();
-            URL.revokeObjectURL(url);
-          }
+          if (wantsDocument) await downloadGeneratedFile(finalContent, requestedFormat);
         } else {
           addMessage(convId, { role: 'assistant', content: '⚠️ La IA no devolvió contenido. Revisa la conexión del Gateway.' });
         }
@@ -233,10 +223,17 @@ export default function ChatInterface() {
       }
     } catch (error: any) {
       console.error('Error:', error);
-      if (!cancelRequestedRef.current) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      const wasAborted = error instanceof DOMException && error.name === 'AbortError' || /aborted|abort/i.test(errorMessage);
+      if (!cancelRequestedRef.current && wasAborted) {
         addMessage(convId, {
           role: 'assistant',
-          content: `❌ **Error:** ${error.message || 'No se pudo conectar con la API'}`,
+          content: 'La respuesta tardó demasiado y fue detenida. Intenta enviarla nuevamente.',
+        });
+      } else if (!cancelRequestedRef.current) {
+        addMessage(convId, {
+          role: 'assistant',
+          content: `❌ **Error:** ${errorMessage || 'No se pudo conectar con la API'}`,
         });
       }
     } finally {
@@ -273,7 +270,7 @@ export default function ChatInterface() {
     <div className="relative flex h-screen bg-chat-bg text-white overflow-hidden">
       <Sidebar />
       <main className="flex-1 flex flex-col min-h-0 min-w-0 w-full">
-        <MessageList messages={displayMessages} />
+        <MessageList messages={displayMessages} onDownload={downloadGeneratedFile} />
         <InputBox onSendMessage={handleSendMessage} onStopMessage={stopResponse} isLoading={isLoading} />
       </main>
     </div>

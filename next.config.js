@@ -130,6 +130,9 @@ const withPWA = require('next-pwa')({
 const nextConfig = {
   reactStrictMode: true,
   swcMinify: true,
+  experimental: {
+    serverComponentsExternalPackages: ['pdfkit'],
+  },
   images: {
     domains: ['avatars.githubusercontent.com', 'lh3.googleusercontent.com']
   }

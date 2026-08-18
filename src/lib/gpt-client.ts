@@ -1,11 +1,16 @@
 export interface ChatMessage {
   role: 'user' | 'assistant' | 'system';
-  content: string;
+  content: string | Array<{
+    type: 'text' | 'image_url';
+    text?: string;
+    image_url?: { url: string };
+  }>;
 }
 
 export interface ChatCompletionRequest {
   messages: ChatMessage[];
   model?: string;
+  providerId?: string;
   temperature?: number;
   max_tokens?: number;
   stream?: boolean;
@@ -57,8 +62,9 @@ class GPTClient {
 
   async chat(request: ChatCompletionRequest): Promise<ChatCompletionResponse> {
     this.validateConfig();
+    const { providerId, ...payload } = request;
     const requestBody = {
-      ...request,
+      ...payload,
       ...(this.model ? { model: this.model } : {}),
       temperature: request.temperature || 0.7,
       max_tokens: request.max_tokens || 1200,
@@ -68,6 +74,7 @@ class GPTClient {
       headers: {
         'Content-Type': 'application/json',
         'Authorization': `Bearer ${this.apiKey}`,
+        ...(providerId ? { 'x-provider-id': providerId } : {}),
       },
       body: JSON.stringify(requestBody),
     });
@@ -81,8 +88,9 @@ class GPTClient {
 
   async *chatStream(request: ChatCompletionRequest): AsyncGenerator<string, void, unknown> {
     this.validateConfig();
+    const { providerId, ...payload } = request;
     const requestBody = {
-      ...request,
+      ...payload,
       stream: true,
       ...(this.model ? { model: this.model } : {}),
       temperature: request.temperature || 0.7,
@@ -93,6 +101,7 @@ class GPTClient {
       headers: {
         'Content-Type': 'application/json',
         'Authorization': `Bearer ${this.apiKey}`,
+        ...(providerId ? { 'x-provider-id': providerId } : {}),
       },
       body: JSON.stringify(requestBody),
     });

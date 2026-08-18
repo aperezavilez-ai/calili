@@ -1,10 +1,10 @@
 'use client';
 
 import { useState, useRef, useEffect } from 'react';
-import { Send, Loader2, Mic, MicOff, Square } from 'lucide-react';
+import { Send, Mic, MicOff, Square, Paperclip, X } from 'lucide-react';
 
 interface InputBoxProps {
-  onSendMessage: (message: string) => void;
+  onSendMessage: (message: string, files: File[]) => void;
   onStopMessage: () => void;
   isLoading: boolean;
 }
@@ -12,7 +12,9 @@ interface InputBoxProps {
 export function InputBox({ onSendMessage, onStopMessage, isLoading }: InputBoxProps) {
   const [input, setInput] = useState('');
   const [isListening, setIsListening] = useState(false);
+  const [attachments, setAttachments] = useState<File[]>([]);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const recognitionRef = useRef<any>(null);
 
   useEffect(() => {
@@ -32,6 +34,11 @@ export function InputBox({ onSendMessage, onStopMessage, isLoading }: InputBoxPr
       recognitionRef.current.lang = 'es-ES';
 
       recognitionRef.current.onresult = (event: any) => {
+        if (window.speechSynthesis?.speaking) {
+          recognitionRef.current?.abort();
+          setIsListening(false);
+          return;
+        }
         const transcript = event.results[0][0].transcript;
         setInput(prev => prev + transcript);
         setIsListening(false);
@@ -47,15 +54,30 @@ export function InputBox({ onSendMessage, onStopMessage, isLoading }: InputBoxPr
     }
   }, []);
 
-  const handleSubmit = () => {
-    if (!input.trim() || isLoading) return;
+  useEffect(() => {
+    if (!isLoading) return;
+    recognitionRef.current?.abort();
+    setIsListening(false);
+  }, [isLoading]);
 
-    onSendMessage(input.trim());
+  const handleSubmit = () => {
+    if ((!input.trim() && attachments.length === 0) || isLoading) return;
+
+    recognitionRef.current?.abort();
+    setIsListening(false);
+    onSendMessage(input.trim() || 'Analiza los archivos adjuntos.', attachments);
     setInput('');
+    setAttachments([]);
 
     if (textareaRef.current) {
       textareaRef.current.style.height = 'auto';
     }
+  };
+
+  const handleFiles = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const selected = Array.from(event.target.files ?? []);
+    setAttachments((current) => [...current, ...selected].slice(0, 4));
+    event.target.value = '';
   };
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
@@ -75,6 +97,10 @@ export function InputBox({ onSendMessage, onStopMessage, isLoading }: InputBoxPr
       recognitionRef.current.stop();
       setIsListening(false);
     } else {
+      if (window.speechSynthesis?.speaking) {
+        alert('Espera a que Calili termine de hablar antes de activar el micrófono.');
+        return;
+      }
       recognitionRef.current.start();
       setIsListening(true);
     }
@@ -83,8 +109,25 @@ export function InputBox({ onSendMessage, onStopMessage, isLoading }: InputBoxPr
   return (
     <div className="border-t border-white/10 bg-chat-bg">
       <div className="max-w-3xl mx-auto px-4 py-4">
+        {attachments.length > 0 && (
+          <div className="mb-2 flex flex-wrap gap-2">
+            {attachments.map((file, index) => (
+              <div key={`${file.name}-${index}`} className="flex max-w-full items-center gap-1 rounded-lg border border-white/10 bg-white/10 px-2 py-1 text-xs text-white/80">
+                <span className="max-w-[180px] truncate">{file.name}</span>
+                <button type="button" onClick={() => setAttachments((current) => current.filter((_, fileIndex) => fileIndex !== index))} title="Quitar archivo" className="text-white/50 hover:text-white">
+                  <X className="h-3.5 w-3.5" />
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
+
         {/* Input Box estilo ChatGPT */}
         <div className="relative flex items-end gap-2 bg-[#40414f] rounded-3xl py-3 px-4 shadow-2xl border border-white/10">
+          <input ref={fileInputRef} type="file" multiple accept=".txt,.md,.csv,.json,.xml,.html,.pdf,.docx,image/*" onChange={handleFiles} className="hidden" />
+          <button type="button" onClick={() => fileInputRef.current?.click()} disabled={isLoading} className="flex-shrink-0 rounded-xl p-2 text-white/60 transition-colors hover:bg-white/10 hover:text-white" title="Adjuntar archivos">
+            <Paperclip className="h-5 w-5" />
+          </button>
           <textarea
             ref={textareaRef}
             value={input}
@@ -116,7 +159,7 @@ export function InputBox({ onSendMessage, onStopMessage, isLoading }: InputBoxPr
           {/* Botón enviar */}
           <button
             onClick={isLoading ? onStopMessage : handleSubmit}
-            disabled={!isLoading && !input.trim()}
+            disabled={!isLoading && !input.trim() && attachments.length === 0}
             className={`p-2 rounded-xl transition-all flex-shrink-0 ${
               isLoading
                 ? 'bg-red-500 text-white hover:bg-red-400'

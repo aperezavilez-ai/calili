@@ -3,14 +3,16 @@ import { gptClient } from '@/lib/gpt-client';
 
 export const runtime = 'edge';
 
+const APICREDITS_PROVIDER_ID = '434f5189-a77b-4d72-be15-bb927d0c8e0a';
+
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json();
-    const { messages, webContext, wantsDocument } = body;
+    const { messages, webContext, wantsDocument, imageData } = body;
 
     if (!Array.isArray(messages) || messages.some((message) => (
       !message || !['user', 'assistant', 'system'].includes(message.role) ||
-      typeof message.content !== 'string'
+      !(typeof message.content === 'string' || Array.isArray(message.content))
     ))) {
       return NextResponse.json({ error: 'Los mensajes no tienen un formato válido' }, { status: 400 });
     }
@@ -26,7 +28,20 @@ export async function POST(req: NextRequest) {
     const systemMessage = { role: 'system' as const, content: systemParts.join('\n\n') };
 
     // Evita reenviar historiales enormes, que aumentan el tiempo hasta el primer token.
-    const fullMessages = [systemMessage, ...messages.slice(-20)];
+    const fullMessages = [systemMessage, ...messages.slice(-20)] as Array<{
+      role: 'user' | 'assistant' | 'system';
+      content: string | Array<{ type: 'text' | 'image_url'; text?: string; image_url?: { url: string } }>;
+    }>;
+
+    if (typeof imageData === 'string' && imageData.startsWith('data:image/')) {
+      const lastMessage = fullMessages[fullMessages.length - 1];
+      if (lastMessage?.role === 'user' && typeof lastMessage.content === 'string') {
+        lastMessage.content = [
+          { type: 'text', text: lastMessage.content },
+          { type: 'image_url', image_url: { url: imageData } },
+        ];
+      }
+    }
 
     // Streaming response
     const encoder = new TextEncoder();
@@ -34,7 +49,10 @@ export async function POST(req: NextRequest) {
       async start(controller) {
         try {
           controller.enqueue(encoder.encode(`data: ${JSON.stringify({ status: 'preparing' })}\n\n`));
-          for await (const chunk of gptClient.chatStream({ messages: fullMessages })) {
+          for await (const chunk of gptClient.chatStream({
+            messages: fullMessages,
+            ...(imageData ? { model: 'gpt-5.5', providerId: APICREDITS_PROVIDER_ID } : {}),
+          })) {
             controller.enqueue(encoder.encode(`data: ${JSON.stringify({ content: chunk })}\n\n`));
           }
           controller.enqueue(encoder.encode('data: [DONE]\n\n'));
