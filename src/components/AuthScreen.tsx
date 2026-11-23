@@ -24,7 +24,14 @@ export function AuthScreen() {
         const { error: signInError } = await supabase.auth.signInWithPassword({ email, password });
         if (signInError) throw signInError;
       } else {
-        const { data, error: signUpError } = await supabase.auth.signUp({ email, password });
+        const { data, error: signUpError } = await supabase.auth.signUp({
+          email,
+          password,
+          // El enlace de confirmacion vuelve SIEMPRE a este origen: sin
+          // esto dependia por completo de la Site URL del panel (causa del
+          // incidente de redireccion a localhost:3000).
+          options: { emailRedirectTo: window.location.origin },
+        });
         if (signUpError) throw signUpError;
         if (!data.session) {
           setNotice('Cuenta creada. Revisa tu correo para confirmar y después inicia sesión.');

@@ -3,6 +3,7 @@
 import { Message } from '@/store/chat-store';
 import { User, Copy, Check, RefreshCw, Pencil, Volume2, Square, Loader2 } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
+import { apiFetch } from '@/lib/api-client';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { fixMarkdownTables } from '@/lib/markdown-fix';
@@ -89,9 +90,10 @@ export function MessageList({ messages, isLoading, onRegenerate, onEditMessage, 
       return;
     }
     audioRef.current?.pause();
+    if (audioUrlRef.current) { URL.revokeObjectURL(audioUrlRef.current); audioUrlRef.current = null; }
     setLoadingSpeakId(id);
     try {
-      const res = await fetch('/api/speak', {
+      const res = await apiFetch('/api/speak', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ text: cleanForSpeech(raw) }),
@@ -99,9 +101,10 @@ export function MessageList({ messages, isLoading, onRegenerate, onEditMessage, 
       if (!res.ok) throw new Error('speak');
       const blob = await res.blob();
       const url = URL.createObjectURL(blob);
+      audioUrlRef.current = url;
       const audio = new Audio(url);
       audioRef.current = audio;
-      audio.onended = () => { setSpeakingId(null); URL.revokeObjectURL(url); };
+      audio.onended = () => { setSpeakingId(null); URL.revokeObjectURL(url); if (audioUrlRef.current === url) audioUrlRef.current = null; };
       setSpeakingId(id);
       await audio.play();
     } catch {
@@ -111,12 +114,15 @@ export function MessageList({ messages, isLoading, onRegenerate, onEditMessage, 
     }
   };
   const scrollContainerRef = useRef<HTMLDivElement>(null);
+  const nearBottomRef = useRef(true);
+  const audioUrlRef = useRef<string | null>(null);
 
   useEffect(() => {
     const container = scrollContainerRef.current;
     if (!container) return;
-
-    // Mantiene visible el mensaje actual también durante el streaming.
+    // Solo se persigue el fondo si el usuario YA esta abajo: si subio a
+    // leer el historial durante el streaming, no se le arrastra de vuelta.
+    if (!nearBottomRef.current) return;
     const frame = window.requestAnimationFrame(() => {
       container.scrollTop = container.scrollHeight;
     });
@@ -160,7 +166,7 @@ export function MessageList({ messages, isLoading, onRegenerate, onEditMessage, 
   }
 
   return (
-    <div ref={scrollContainerRef} className="min-h-0 flex-1 overflow-y-auto">
+    <div ref={scrollContainerRef} className="min-h-0 flex-1 overflow-y-auto" onScroll={(e) => { const el = e.currentTarget; nearBottomRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 140; }}>
       <div className="max-w-3xl mx-auto px-4 py-6 space-y-8">
         {messages.map((message, index) => (
           <div

@@ -131,11 +131,27 @@ const nextConfig = {
   reactStrictMode: true,
   swcMinify: true,
   experimental: {
-    serverComponentsExternalPackages: ['pdfkit', 'msedge-tts', 'ws', 'bufferutil', 'utf-8-validate'],
+    serverComponentsExternalPackages: ['pdfkit', 'msedge-tts', 'ws'],
   },
   images: {
-    domains: ['avatars.githubusercontent.com', 'lh3.googleusercontent.com']
-  }
+    remotePatterns: [
+      { protocol: 'https', hostname: 'avatars.githubusercontent.com' },
+      { protocol: 'https', hostname: 'lh3.googleusercontent.com' },
+    ],
+  },
+  async headers() {
+    return [
+      {
+        source: '/:path*',
+        headers: [
+          { key: 'X-Content-Type-Options', value: 'nosniff' },
+          { key: 'Referrer-Policy', value: 'strict-origin-when-cross-origin' },
+          { key: 'X-Frame-Options', value: 'DENY' },
+          { key: 'Permissions-Policy', value: 'microphone=(self), camera=()' },
+        ],
+      },
+    ];
+  },
 };
 
 module.exports = withPWA(nextConfig);

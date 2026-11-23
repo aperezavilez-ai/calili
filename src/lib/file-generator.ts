@@ -145,8 +145,19 @@ export interface CreateFileArgs {
   filas?: string[][];
 }
 
+const VALID_FORMATS: GeneratedFileFormat[] = ['docx', 'xlsx', 'pdf', 'csv', 'md', 'txt'];
+
 export async function generateFile(args: CreateFileArgs): Promise<GeneratedFile> {
   const format = args.formato;
+  if (!VALID_FORMATS.includes(format)) {
+    throw new Error(`Formato no soportado: ${String(format)}. Usa docx, xlsx, pdf, csv, md o txt.`);
+  }
+  if ((args.contenido ?? '').length > 200_000) {
+    throw new Error('El contenido es demasiado grande para un solo archivo (máximo 200 000 caracteres).');
+  }
+  if (args.filas && args.filas.length > 5000) {
+    throw new Error('La tabla es demasiado grande (máximo 5 000 filas por archivo).');
+  }
   const title = args.titulo?.trim() || args.nombre;
   const content = args.contenido ?? '';
   const explicitTable = args.columnas || args.filas

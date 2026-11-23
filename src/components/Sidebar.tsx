@@ -1,5 +1,6 @@
 'use client';
 
+import { apiFetch } from '@/lib/api-client';
 import { useChatStore } from '@/store/chat-store';
 import { useSettingsStore } from '@/store/settings-store';
 import { MessageSquarePlus, Trash2, Edit2, Check, X, Menu, Settings, Download, LogOut } from 'lucide-react';
@@ -90,7 +91,7 @@ export function Sidebar({ userEmail, onSignOut }: { userEmail?: string; onSignOu
       for (const m of conv.messages) {
         lines.push(m.role === 'user' ? `**Tú:** ${m.content}` : `**Calili:** ${m.content}`, '');
       }
-      const res = await fetch('/api/export', {
+      const res = await apiFetch('/api/export', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ content: lines.join('\n'), format: 'docx', title: conv.title }),
@@ -102,7 +103,7 @@ export function Sidebar({ userEmail, onSignOut }: { userEmail?: string; onSignOu
       a.href = url;
       a.download = `${conv.title.replace(/[^\wáéíóúñ -]/gi, '').trim().slice(0, 60) || 'conversacion'}.docx`;
       a.click();
-      URL.revokeObjectURL(url);
+      window.setTimeout(() => URL.revokeObjectURL(url), 1000);
     } catch { /* exportacion no disponible */ }
   };
 
@@ -310,9 +311,12 @@ export function Sidebar({ userEmail, onSignOut }: { userEmail?: string; onSignOu
                     </button>
                   </div>
                 ) : (
-                  <button
+                  <div
+                    role="button"
+                    tabIndex={0}
                     onClick={() => setCurrentConversation(conv.id)}
-                    className="w-full text-left px-3 py-2 flex items-center justify-between"
+                    onKeyDown={(e) => { if (e.key === 'Enter') setCurrentConversation(conv.id); }}
+                    className="w-full text-left px-3 py-2 flex items-center justify-between cursor-pointer"
                   >
                     <span className="text-sm truncate flex-1">{conv.title}</span>
                     <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
@@ -347,7 +351,7 @@ export function Sidebar({ userEmail, onSignOut }: { userEmail?: string; onSignOu
                         <Trash2 className="w-3 h-3" />
                       </button>
                     </div>
-                  </button>
+                  </div>
                 )}
               </div>
             ))}

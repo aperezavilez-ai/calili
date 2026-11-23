@@ -1,15 +1,21 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { requireApiUser } from '@/lib/api-auth';
 
 // Dictado por voz con Whisper servido por Groq (el mismo proveedor y la
 // misma clave que el chat). Sustituye al reconocimiento del navegador,
 // que transcribía enredado.
 export const runtime = 'nodejs';
+export const maxDuration = 120;
 
 const GROQ_BASE_URL = process.env.GROQ_BASE_URL || 'https://api.groq.com/openai/v1';
 const WHISPER_MODEL = process.env.WHISPER_MODEL || 'whisper-large-v3-turbo';
 const MAX_AUDIO_BYTES = 10 * 1024 * 1024;
 
 export async function POST(req: NextRequest) {
+  const apiUser = await requireApiUser(req);
+  if (!apiUser) {
+    return NextResponse.json({ error: 'Inicia sesión para usar Calili.' }, { status: 401 });
+  }
   const apiKey = process.env.GROQ_API_KEY;
   if (!apiKey) {
     return NextResponse.json(
@@ -34,8 +40,10 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'El audio es demasiado largo. Dicta en partes más cortas.' }, { status: 413 });
     }
 
+    const mime = audio.type || 'audio/webm';
+    const ext = mime.includes('mp4') ? 'mp4' : mime.includes('ogg') ? 'ogg' : mime.includes('wav') ? 'wav' : 'webm';
     const upstream = new FormData();
-    upstream.append('file', audio, 'dictado.webm');
+    upstream.append('file', audio, `dictado.${ext}`);
     upstream.append('model', WHISPER_MODEL);
     upstream.append('language', 'es');
     upstream.append('response_format', 'verbose_json');
@@ -44,6 +52,7 @@ export async function POST(req: NextRequest) {
       method: 'POST',
       headers: { Authorization: `Bearer ${apiKey}` },
       body: upstream,
+      signal: AbortSignal.timeout(90_000),
     });
 
     if (!response.ok) {

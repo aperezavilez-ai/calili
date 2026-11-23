@@ -6,8 +6,14 @@ import { isSupabaseConfigured } from '@/lib/supabase';
 // migración 003) cuando hay sesión. Si la tabla aún no existe, la copia
 // local sostiene la memoria y nada se pierde.
 
-const LOCAL_KEY = 'calili-memory-facts';
 const MAX_FACTS = 60;
+
+// La copia local va con el nombre del usuario: antes la clave era una
+// sola para todo el navegador y la siguiente cuenta que entraba heredaba
+// los hechos de la anterior (fuga entre cuentas en el mismo equipo).
+function localKey(userId: string | null): string {
+  return `calili-memory-facts:${userId ?? 'anon'}`;
+}
 
 function normalize(fact: string): string {
   return fact.trim().replace(/\s+/g, ' ');
@@ -17,9 +23,9 @@ function sameFact(a: string, b: string): boolean {
   return normalize(a).toLowerCase() === normalize(b).toLowerCase();
 }
 
-export function loadLocalFacts(): string[] {
+export function loadLocalFacts(userId: string | null = null): string[] {
   try {
-    const raw = window.localStorage.getItem(LOCAL_KEY);
+    const raw = window.localStorage.getItem(localKey(userId));
     const parsed = raw ? (JSON.parse(raw) as unknown) : [];
     return Array.isArray(parsed) ? parsed.filter((f): f is string => typeof f === 'string') : [];
   } catch {
@@ -27,14 +33,14 @@ export function loadLocalFacts(): string[] {
   }
 }
 
-function saveLocalFacts(facts: string[]) {
+function saveLocalFacts(facts: string[], userId: string | null = null) {
   try {
-    window.localStorage.setItem(LOCAL_KEY, JSON.stringify(facts.slice(-MAX_FACTS)));
+    window.localStorage.setItem(localKey(userId), JSON.stringify(facts.slice(-MAX_FACTS)));
   } catch { /* almacenamiento lleno o bloqueado */ }
 }
 
 export async function loadMemoryFacts(userId: string | null): Promise<string[]> {
-  const local = loadLocalFacts();
+  const local = loadLocalFacts(userId);
   if (!userId || !isSupabaseConfigured) return local;
   try {
     const remote = await fetchMemoryFactsDb(userId);
@@ -42,7 +48,7 @@ export async function loadMemoryFacts(userId: string | null): Promise<string[]> 
     for (const fact of local) {
       if (!merged.some((f) => sameFact(f, fact))) merged.push(fact);
     }
-    saveLocalFacts(merged);
+    saveLocalFacts(merged, userId);
     return merged.slice(-MAX_FACTS);
   } catch {
     return local;
@@ -51,27 +57,27 @@ export async function loadMemoryFacts(userId: string | null): Promise<string[]> 
 
 export async function saveMemoryFact(userId: string | null, rawFact: string): Promise<string[]> {
   const fact = normalize(rawFact);
-  const facts = loadLocalFacts();
+  const facts = loadLocalFacts(userId);
   if (fact && !facts.some((f) => sameFact(f, fact))) {
     facts.push(fact);
-    saveLocalFacts(facts);
+    saveLocalFacts(facts, userId);
     if (userId && isSupabaseConfigured) {
       try { await insertMemoryFactDb(userId, fact); } catch { /* queda la copia local */ }
     }
   }
-  return loadLocalFacts();
+  return loadLocalFacts(userId);
 }
 
 export async function removeMemoryFact(userId: string | null, rawFact: string): Promise<string[]> {
   const target = normalize(rawFact).toLowerCase();
-  const facts = loadLocalFacts();
+  const facts = loadLocalFacts(userId);
   const hit = facts.find((f) => sameFact(f, rawFact))
     ?? facts.find((f) => f.toLowerCase().includes(target) || target.includes(f.toLowerCase()));
   if (hit) {
-    saveLocalFacts(facts.filter((f) => f !== hit));
+    saveLocalFacts(facts.filter((f) => f !== hit), userId);
     if (userId && isSupabaseConfigured) {
       try { await deleteMemoryFactDb(userId, hit); } catch { /* queda fuera de la copia local */ }
     }
   }
-  return loadLocalFacts();
+  return loadLocalFacts(userId);
 }

@@ -95,6 +95,7 @@ async function* streamFromProvider(
   const decoder = new TextDecoder();
   let buffer = '';
 
+  try {
   while (true) {
     const { done, value } = await reader.read();
     if (done) break;
@@ -114,6 +115,9 @@ async function* streamFromProvider(
         // Línea parcial o de control: se ignora.
       }
     }
+  }
+  } finally {
+    await reader.cancel().catch(() => undefined);
   }
 }
 
@@ -144,16 +148,17 @@ export async function* streamNexusChat(
       let waitingFirst = true;
       while (true) {
         const nextPromise = iterator.next();
+        let timer: ReturnType<typeof setTimeout> | undefined;
         const result = waitingFirst
           ? await Promise.race([
               nextPromise,
-              new Promise<never>((_, reject) =>
-                setTimeout(
-                  () => reject(new Error(`El motor NEXUS (${provider.id}) tardó demasiado en arrancar.`)),
-                  FIRST_TOKEN_TIMEOUT_MS,
-                ),
-              ),
-            ])
+              new Promise<never>((_, reject) => {
+                timer = setTimeout(() => {
+                  void iterator.return(undefined).catch(() => undefined);
+                  reject(new Error(`El motor NEXUS (${provider.id}) tardó demasiado en arrancar.`));
+                }, FIRST_TOKEN_TIMEOUT_MS);
+              }),
+            ]).finally(() => { if (timer) clearTimeout(timer); })
           : await nextPromise;
         waitingFirst = false;
         if (result.done) break;
@@ -218,7 +223,9 @@ export async function completeWithTools(
       stream: false,
       max_completion_tokens: 4096,
     }),
-    signal,
+    signal: signal && typeof AbortSignal.any === 'function'
+      ? AbortSignal.any([signal, AbortSignal.timeout(90_000)])
+      : (signal ?? AbortSignal.timeout(90_000)),
   });
 
   if (!response.ok) {
@@ -319,6 +326,7 @@ export async function* streamVisionChat(
   const reader = response.body.getReader();
   const decoder = new TextDecoder();
   let buffer = '';
+  try {
   while (true) {
     const { done, value } = await reader.read();
     if (done) break;
@@ -338,5 +346,8 @@ export async function* streamVisionChat(
         // Línea parcial o de control: se ignora.
       }
     }
+  }
+  } finally {
+    await reader.cancel().catch(() => undefined);
   }
 }

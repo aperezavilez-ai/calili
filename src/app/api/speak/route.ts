@@ -1,8 +1,9 @@
 import { NextRequest } from 'next/server';
+import { requireApiUser } from '@/lib/api-auth';
 import { MsEdgeTTS, OUTPUT_FORMAT } from 'msedge-tts';
 
 export const runtime = 'nodejs';
-export const maxDuration = 30;
+export const maxDuration = 60;
 
 const EDGE_VOICE = process.env.CALILI_VOICE || 'es-MX-DaliaNeural';
 const OPENAI_VOICE = process.env.CALILI_OPENAI_VOICE || 'shimmer';
@@ -21,7 +22,7 @@ async function openaiTts(text: string): Promise<Buffer> {
       response_format: 'mp3',
       instructions: 'Habla en español latinoamericano neutro, con tono cálido, natural y conversacional, como una asistente cercana. Ritmo fluido, sin pausas artificiales.',
     }),
-    signal: AbortSignal.timeout(25000),
+    signal: AbortSignal.timeout(12000),
   });
   if (!res.ok) throw new Error(`openai tts ${res.status}`);
   const audio = Buffer.from(await res.arrayBuffer());
@@ -34,8 +35,9 @@ async function edgeTts(text: string): Promise<Buffer> {
   await tts.setMetadata(EDGE_VOICE, OUTPUT_FORMAT.AUDIO_24KHZ_96KBITRATE_MONO_MP3);
   const { audioStream } = tts.toStream(text.slice(0, MAX_CHARS), { rate: 0.94 });
   const chunks: Buffer[] = [];
+  try {
   await new Promise<void>((resolve, reject) => {
-    const timer = setTimeout(() => reject(new Error('edge timeout')), 15000);
+    const timer = setTimeout(() => reject(new Error('edge timeout')), 12000);
     audioStream.on('data', (chunk: Buffer) => chunks.push(chunk));
     audioStream.on('end', () => { clearTimeout(timer); resolve(); });
     audioStream.on('error', (err: Error) => { clearTimeout(timer); reject(err); });
@@ -43,6 +45,9 @@ async function edgeTts(text: string): Promise<Buffer> {
   const audio = Buffer.concat(chunks);
   if (audio.length < 200) throw new Error('edge audio vacio');
   return audio;
+  } finally {
+    (tts as unknown as { close?: () => void }).close?.();
+  }
 }
 
 function googleChunks(text: string): string[] {
@@ -81,6 +86,10 @@ async function googleTts(text: string): Promise<Buffer> {
 }
 
 export async function POST(req: NextRequest) {
+  const apiUser = await requireApiUser(req);
+  if (!apiUser) {
+    return Response.json({ error: 'Inicia sesión para usar Calili.' }, { status: 401 });
+  }
   let text = '';
   try {
     const body = await req.json();
@@ -108,5 +117,5 @@ export async function POST(req: NextRequest) {
       lastError = err?.message || engine.name;
     }
   }
-  return Response.json({ error: `Voz no disponible: ${lastError}` }, { status: 502 });
+  return Response.json({ error: 'La voz no está disponible en este momento.' }, { status: 502 });
 }

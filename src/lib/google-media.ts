@@ -117,10 +117,14 @@ export async function googleImage(
 async function fetchFollowingRedirects(url: string): Promise<Buffer> {
   let current = url;
   for (let hop = 0; hop < 4; hop++) {
+    // La clave SOLO viaja a dominios de Google: si la descarga redirige a
+    // otro host, la cabecera con la clave no lo acompana.
+    const host = new URL(current).hostname;
+    const isGoogleHost = host === 'googleapis.com' || host.endsWith('.googleapis.com') || host.endsWith('.googleusercontent.com');
     const res = await fetch(current, {
-      headers: { 'x-goog-api-key': googleAiKey() as string },
+      headers: isGoogleHost ? { 'x-goog-api-key': googleAiKey() as string } : {},
       redirect: 'manual',
-      signal: AbortSignal.timeout(120000),
+      signal: AbortSignal.timeout(60000),
     });
     if (res.status >= 300 && res.status < 400) {
       const location = res.headers.get('location');
@@ -161,7 +165,7 @@ export async function googleVideo(
   const opName = (await start.json())?.name as string | undefined;
   if (!opName) throw new Error('Veo no devolvió operación.');
 
-  const deadline = Date.now() + 270000;
+  const deadline = Date.now() + 240000;
   let videoUri: string | undefined;
   while (Date.now() < deadline) {
     await new Promise((resolve) => setTimeout(resolve, 10000));
@@ -169,7 +173,15 @@ export async function googleVideo(
       headers: headers(),
       signal: AbortSignal.timeout(30000),
     });
-    if (!poll.ok) continue;
+    if (!poll.ok) {
+      // Un 4xx (clave invalida, sin facturacion, permiso) es permanente:
+      // se reporta al instante en vez de reintentar 4 minutos en silencio.
+      if (poll.status >= 400 && poll.status < 500) {
+        const detail = await poll.text().catch(() => '');
+        throw new Error(`Veo respondió ${poll.status}. ${detail.slice(0, 240)}`);
+      }
+      continue;
+    }
     const op = await poll.json();
     if (op?.error) throw new Error(`Veo falló: ${JSON.stringify(op.error).slice(0, 240)}`);
     if (op?.done) {
@@ -201,7 +213,7 @@ export async function googleMusic(
       contents: [{ role: 'user', parts: [{ text: prompt }] }],
       generationConfig: { responseModalities: ['AUDIO', 'TEXT'] },
     },
-    240000,
+    100000,
   );
 
   let lyrics: string | undefined;

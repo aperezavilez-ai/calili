@@ -67,9 +67,11 @@ async function pollinationsGenerate(prompt: string): Promise<GeneratedFile> {
   const url = `https://image.pollinations.ai/prompt/${encodeURIComponent(prompt)}?width=1024&height=1024&nologo=true&seed=${seed}`;
   const res = await fetch(url, { signal: AbortSignal.timeout(120000) });
   if (!res.ok) throw new Error(`pollinations ${res.status}`);
+  const contentType = res.headers.get('content-type') || '';
+  if (!contentType.startsWith('image/')) throw new Error('pollinations no devolvio una imagen');
   const buffer = Buffer.from(await res.arrayBuffer());
   if (buffer.length < 5000) throw new Error('pollinations devolvio una imagen vacia');
-  return toFile(buffer.toString('base64'), 'image/jpeg', 'jpg');
+  return toFile(buffer.toString('base64'), contentType.includes('png') ? 'image/png' : 'image/jpeg', contentType.includes('png') ? 'png' : 'jpg');
 }
 
 export async function createImage(
@@ -80,10 +82,16 @@ export async function createImage(
   if (!prompt) throw new Error('Falta la descripción de la imagen.');
   const wantsEdit = Boolean(args?.usar_adjunta && attachedImage);
 
+  // Cadena de respaldo REAL: si el motor elegido falla (cuota, 5xx,
+  // modelo retirado), se cae al siguiente en vez de matar la herramienta.
   if (googleAiKey()) {
-    const { googleImage } = await import('@/lib/google-media');
-    const { file, note } = await googleImage(prompt, wantsEdit ? attachedImage : undefined);
-    return { file, engine: wantsEdit ? 'google-edit' : 'google', note };
+    try {
+      const { googleImage } = await import('@/lib/google-media');
+      const { file, note } = await googleImage(prompt, wantsEdit ? attachedImage : undefined);
+      return { file, engine: wantsEdit ? 'google-edit' : 'google', note };
+    } catch (error) {
+      console.error('Calili: motor de imagen principal falló, se cae al siguiente', error);
+    }
   }
 
   if (process.env.OPENAI_API_KEY) {

@@ -21,12 +21,22 @@ export async function fetchConversations(userId: string): Promise<Conversation[]
   if (!convs || convs.length === 0) return [];
 
   const ids = convs.map((c) => c.id);
-  const { data: msgs, error: msgError } = await client
-    .from('messages')
-    .select('id, conversation_id, role, content, created_at')
-    .in('conversation_id', ids)
-    .order('created_at', { ascending: true });
-  if (msgError) throw msgError;
+  // Paginado obligatorio: PostgREST corta en 1.000 filas por respuesta;
+  // sin paginar, un usuario con mas de 1.000 mensajes perdia los mas
+  // antiguos en silencio en cada recarga.
+  const msgs: Array<{ id: string; conversation_id: string; role: string; content: string; created_at: string }> = [];
+  const PAGE = 1000;
+  for (let offset = 0; ; offset += PAGE) {
+    const { data: page, error: msgError } = await client
+      .from('messages')
+      .select('id, conversation_id, role, content, created_at')
+      .in('conversation_id', ids)
+      .order('created_at', { ascending: true })
+      .range(offset, offset + PAGE - 1);
+    if (msgError) throw msgError;
+    msgs.push(...((page ?? []) as typeof msgs));
+    if (!page || page.length < PAGE) break;
+  }
 
   const messagesByConversation = new Map<string, Message[]>();
   for (const m of msgs ?? []) {
@@ -61,7 +71,23 @@ export async function insertConversation(userId: string, conversation: Conversat
   if (error) throw error;
 }
 
+// Registro de inserciones de conversacion en vuelo: el primer mensaje
+// de una conversacion nueva espera a que la conversacion exista en la
+// base, o la llave foranea lo rechaza y el mensaje se pierde en silencio.
+const pendingConversations = new Map<string, Promise<void>>();
+
+export function insertConversationOnce(userId: string, conversation: Conversation): Promise<void> {
+  const existing = pendingConversations.get(conversation.id);
+  if (existing) return existing;
+  const promise = insertConversation(userId, conversation);
+  pendingConversations.set(conversation.id, promise);
+  promise.catch(() => pendingConversations.delete(conversation.id));
+  return promise;
+}
+
 export async function insertMessage(conversationId: string, message: Message): Promise<void> {
+  const pending = pendingConversations.get(conversationId);
+  if (pending) await pending.catch(() => undefined);
   const client = db();
   const { error } = await client.from('messages').insert({
     id: message.id,

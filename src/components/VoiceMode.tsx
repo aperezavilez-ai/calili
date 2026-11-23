@@ -7,6 +7,7 @@ import { useSettingsStore } from '@/store/settings-store';
 import { normalizeCaliliResponse } from '@/lib/response-policy';
 import { playEarcon } from '@/lib/earcons';
 import { loadMemoryFacts, saveMemoryFact, removeMemoryFact } from '@/lib/memory-facts';
+import { apiFetch } from '@/lib/api-client';
 
 export interface GeneratedFile { id: string; name: string; mime: string; base64: string }
 
@@ -50,6 +51,7 @@ export default function VoiceMode({ onClose, onFile }: VoiceModeProps) {
   const speakCueRef = useRef(false);
   const factsRef = useRef<string[]>([]);
   const lastReplyRef = useRef('');
+  const errorsRef = useRef(0);
 
   const stopTracks = useCallback(() => {
     cancelAnimationFrame(rafRef.current);
@@ -65,7 +67,7 @@ export default function VoiceMode({ onClose, onFile }: VoiceModeProps) {
   }, []);
 
   const fetchSpeakAudio = useCallback((text: string): Promise<Blob | null> => {
-    return fetch('/api/speak', {
+    return apiFetch('/api/speak', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ text }),
@@ -146,7 +148,7 @@ export default function VoiceMode({ onClose, onFile }: VoiceModeProps) {
     const conversation = state.conversations.find((c) => c.id === conversationId);
     const history = (conversation?.messages || []).slice(-20).map((m) => ({ role: m.role, content: m.content }));
 
-    const res = await fetch('/api/chat', {
+    const res = await apiFetch('/api/chat', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ messages: history, model: useSettingsStore.getState().selectedModel, voice: true, memory: factsRef.current }),
@@ -266,6 +268,10 @@ export default function VoiceMode({ onClose, onFile }: VoiceModeProps) {
       };
 
       const stopped = new Promise<void>((resolve) => { recorder.onstop = () => resolve(); });
+      const hardStop = window.setTimeout(() => {
+        if (recorder.state !== 'inactive') { try { recorder.stop(); } catch { /* ya detenido */ } }
+      }, 32000);
+      void stopped.then(() => window.clearTimeout(hardStop));
       recorder.start(250);
       playEarcon('listen');
       rafRef.current = requestAnimationFrame(tick);
@@ -286,10 +292,11 @@ export default function VoiceMode({ onClose, onFile }: VoiceModeProps) {
       setPhase('thinking');
       const form = new FormData();
       form.append('audio', new Blob(chunks, { type: recorder.mimeType || 'audio/webm' }), 'voz.webm');
-      const tres = await fetch('/api/transcribe', { method: 'POST', body: form });
+      const tres = await apiFetch('/api/transcribe', { method: 'POST', body: form });
       const tdata = await tres.json().catch(() => ({}));
       const userText = String(tdata?.text || '').trim();
       if (!userText) { void listenOnce(); return; }
+      errorsRef.current = 0;
       if (mutedRef.current) return;
       // Guardia anti-eco: si lo "escuchado" es en realidad la voz de
       // Calili rebotando de la bocina al microfono (su respuesta anterior
@@ -298,7 +305,7 @@ export default function VoiceMode({ onClose, onFile }: VoiceModeProps) {
         const clean = (value: string) => value.toLowerCase().replace(/[^a-záéíóúñ0-9\s]/gi, ' ').replace(/\s+/g, ' ').trim();
         const heardClean = clean(userText);
         const replyClean = clean(lastReplyRef.current);
-        if (heardClean.length >= 12 && replyClean && (replyClean.includes(heardClean) || heardClean.includes(replyClean.slice(0, 40)))) {
+        if (heardClean.length >= 12 && replyClean && (replyClean.includes(heardClean) || (replyClean.length >= 40 && heardClean.includes(replyClean.slice(0, 40))))) {
           void listenOnce();
           return;
         }
@@ -321,6 +328,13 @@ export default function VoiceMode({ onClose, onFile }: VoiceModeProps) {
       void listenOnce();
     } catch {
       if (!openRef.current) return;
+      // Un tropiezo de red ya no mata el bucle: se reintenta la escucha
+      // hasta 3 veces antes de declarar el error en pantalla.
+      errorsRef.current += 1;
+      if (errorsRef.current <= 3 && !mutedRef.current) {
+        window.setTimeout(() => { if (openRef.current) void listenOnce(); }, 700);
+        return;
+      }
       playEarcon('error');
       setPhase('error');
     }

@@ -1,3 +1,4 @@
+import { requireApiUser } from '@/lib/api-auth';
 import { NextRequest, NextResponse } from 'next/server';
 import PDFDocument from 'pdfkit';
 import { Document, HeadingLevel, Packer, Paragraph, TextRun } from 'docx';
@@ -50,13 +51,20 @@ async function createPdf(content: string): Promise<Buffer> {
 }
 
 export async function POST(req: NextRequest) {
+  const apiUser = await requireApiUser(req);
+  if (!apiUser) {
+    return NextResponse.json({ error: 'Inicia sesión para usar Calili.' }, { status: 401 });
+  }
   try {
     const body = await req.json();
     const content = typeof body?.content === 'string' ? body.content.trim() : '';
     const format = body?.format === 'pdf' || body?.format === 'docx' ? body.format : 'md';
-    const title = typeof body?.title === 'string' && body.title.trim() ? body.title.trim() : 'calili-documento';
+    const title = (typeof body?.title === 'string' && body.title.trim() ? body.title.trim() : 'calili-documento')
+      .replace(/[^a-zA-Z0-9-_áéíóúñÁÉÍÓÚÑ ]/g, '')
+      .slice(0, 80) || 'calili-documento';
 
     if (!content) return NextResponse.json({ error: 'El contenido es requerido.' }, { status: 400 });
+    if (content.length > 200_000) return NextResponse.json({ error: 'El contenido es demasiado grande para exportar.' }, { status: 413 });
 
     if (format === 'md') {
       return new NextResponse(content, {

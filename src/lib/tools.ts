@@ -208,6 +208,7 @@ async function executeSearch(consulta: string): Promise<string> {
       include_answer: false,
       include_raw_content: false,
     }),
+    signal: AbortSignal.timeout(15_000),
   });
   if (!response.ok) return `La búsqueda falló (HTTP ${response.status}). Responde sin ella y avisa al usuario.`;
   const data = await response.json();
@@ -225,12 +226,14 @@ async function executeReadRepo(url: string): Promise<string> {
   const repo = repoRaw.replace(/\.git$/, '');
   const headers = { Accept: 'application/vnd.github+json', 'User-Agent': 'Calili' };
 
+  const repoSignal = AbortSignal.timeout(20_000);
   const [repoRes, readmeRes, treeRes] = await Promise.all([
-    fetch(`https://api.github.com/repos/${owner}/${repo}`, { headers }),
+    fetch(`https://api.github.com/repos/${owner}/${repo}`, { headers, signal: repoSignal }),
     fetch(`https://api.github.com/repos/${owner}/${repo}/readme`, {
       headers: { ...headers, Accept: 'application/vnd.github.raw+json' },
+      signal: repoSignal,
     }),
-    fetch(`https://api.github.com/repos/${owner}/${repo}/git/trees/HEAD?recursive=1`, { headers }),
+    fetch(`https://api.github.com/repos/${owner}/${repo}/git/trees/HEAD?recursive=1`, { headers, signal: repoSignal }),
   ]);
 
   if (!repoRes.ok) return `No se pudo leer el repositorio ${owner}/${repo} (HTTP ${repoRes.status}). Puede ser privado o no existir.`;
@@ -304,7 +307,7 @@ export async function executeTool(name: string, rawArgs: string, context?: { ima
         };
       }
       case 'recordar': {
-        const hecho = String(args.hecho ?? '').trim();
+        const hecho = String(args.hecho ?? '').trim().slice(0, 300);
         if (!hecho) return { resultForModel: 'No llegó el hecho a recordar.' };
         return {
           resultForModel: `Hecho guardado en la memoria de largo plazo: "${hecho}". El usuario ya lo puede dar por recordado para siempre; confírmalo en una frase breve y natural.`,
@@ -312,7 +315,7 @@ export async function executeTool(name: string, rawArgs: string, context?: { ima
         };
       }
       case 'olvidar': {
-        const hecho = String(args.hecho ?? '').trim();
+        const hecho = String(args.hecho ?? '').trim().slice(0, 300);
         if (!hecho) return { resultForModel: 'No llegó el hecho a olvidar.' };
         return {
           resultForModel: `Hecho eliminado de la memoria de largo plazo: "${hecho}". Confírmalo en una frase breve.`,

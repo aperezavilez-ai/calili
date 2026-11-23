@@ -1,7 +1,7 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 import {
-  insertConversation,
+  insertConversationOnce,
   insertMessage,
   updateConversationTitleDb,
   deleteConversationDb,
@@ -86,7 +86,7 @@ export const useChatStore = create<ChatStore>()(
         }));
 
         const { dbUserId } = get();
-        if (dbUserId) sync(insertConversation(dbUserId, newConversation));
+        if (dbUserId) sync(insertConversationOnce(dbUserId, newConversation));
 
         return id;
       },
@@ -156,7 +156,7 @@ export const useChatStore = create<ChatStore>()(
         set((state) => ({
           conversations: state.conversations.map((conv) =>
             conv.id === conversationId
-              ? { ...conv, messages: conv.messages.filter((m) => m.id !== messageId), updatedAt: Date.now() }
+              ? { ...conv, messages: conv.messages.filter((m) => m.id !== messageId), updatedAt: Date.now(), summary: undefined, summaryUpTo: 0 }
               : conv
           ),
         }));
@@ -172,7 +172,7 @@ export const useChatStore = create<ChatStore>()(
         set((state) => ({
           conversations: state.conversations.map((c) =>
             c.id === conversationId
-              ? { ...c, messages: c.messages.slice(0, idx), updatedAt: Date.now() }
+              ? { ...c, messages: c.messages.slice(0, idx), updatedAt: Date.now(), summary: undefined, summaryUpTo: 0 }
               : c
           ),
         }));

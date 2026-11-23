@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { useChatStore } from '@/store/chat-store';
 import { useSettingsStore } from '@/store/settings-store';
+import { apiFetch } from '@/lib/api-client';
 import { Sidebar } from '@/components/Sidebar';
 import { MessageList } from '@/components/MessageList';
 import { InputBox } from '@/components/InputBox';
@@ -39,7 +40,20 @@ export default function ChatInterface() {
 
   const { voiceEnabled, voiceGender } = useSettingsStore();
   const [streamingContent, setStreamingContent] = useState('');
-  const [generatedFiles, setGeneratedFiles] = useState<Array<{ id: string; name: string; mime: string; base64: string }>>([]);
+  // Los archivos generados viven POR conversacion: antes eran un estado
+  // global que se borraba al cambiar de chat y la tarjeta de descarga se
+  // perdia para siempre.
+  const [filesByConversation, setFilesByConversation] = useState<Record<string, Array<{ id: string; name: string; mime: string; base64: string }>>>({});
+  const generatedFiles = filesByConversation[currentConversationId ?? ''] ?? [];
+  const addGeneratedFile = (convId: string, file: { name: string; mime: string; base64: string }) => {
+    setFilesByConversation((prev) => ({
+      ...prev,
+      [convId]: [...(prev[convId] ?? []), { id: `${Date.now()}-${(prev[convId] ?? []).length}`, ...file }],
+    }));
+  };
+  const [streamingConvId, setStreamingConvId] = useState<string | null>(null);
+  const partialContentRef = useRef('');
+  const handledUsersRef = useRef<Set<string>>(new Set());
   const [voiceModeOpen, setVoiceModeOpen] = useState(false);
   const [memoryFacts, setMemoryFacts] = useState<string[]>([]);
 
@@ -111,17 +125,26 @@ export default function ChatInterface() {
       setDbUser(user.id);
       setUserEmail(user.email ?? '');
       setAuthStatus('signedIn');
+      // getSession y onAuthStateChange disparan AMBOS al cargar: sin esta
+      // guarda, la carga/subida del historial corria dos veces en paralelo.
+      if (handledUsersRef.current.has(user.id)) return;
+      handledUsersRef.current.add(user.id);
       try {
         const remote = await fetchConversations(user.id);
         if (cancelled) return;
-        if (remote.length > 0) {
+        // Se suben las conversaciones que solo existen en local (su
+        // sincronizacion pudo fallar antes) en vez de descartarlas al
+        // reemplazar con lo remoto.
+        const remoteIds = new Set(remote.map((c) => c.id));
+        const localOnly = useChatStore.getState().conversations.filter((c) => !remoteIds.has(c.id));
+        for (const conversation of localOnly) {
+          await uploadLocalConversation(user.id, conversation).catch(() => undefined);
+        }
+        if (localOnly.length > 0) {
+          const merged = await fetchConversations(user.id);
+          if (!cancelled) replaceConversations(merged);
+        } else if (remote.length > 0) {
           replaceConversations(remote);
-        } else {
-          // Primer ingreso: subir el historial local para no perderlo.
-          const local = useChatStore.getState().conversations;
-          for (const conversation of local) {
-            await uploadLocalConversation(user.id, conversation);
-          }
         }
       } catch (error) {
         console.error('Calili: no se pudo cargar el historial de Supabase', error);
@@ -140,10 +163,6 @@ export default function ChatInterface() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  useEffect(() => {
-    setGeneratedFiles([]);
-  }, [currentConversationId]);
-
   const downloadToolFile = (file: { name: string; mime: string; base64: string }) => {
     const binary = atob(file.base64);
     const bytes = new Uint8Array(binary.length);
@@ -153,7 +172,7 @@ export default function ChatInterface() {
     link.href = url;
     link.download = file.name;
     link.click();
-    URL.revokeObjectURL(url);
+    window.setTimeout(() => URL.revokeObjectURL(url), 1000);
   };
 
   const signOut = async () => {
@@ -178,13 +197,14 @@ export default function ChatInterface() {
   ): Promise<string> => {
     const chatController = new AbortController();
     activeRequestControllerRef.current = chatController;
-    const timeout = window.setTimeout(() => chatController.abort(), 120000);
+    const timeout = window.setTimeout(() => chatController.abort(), 300000);
     try {
-      const response = await fetch('/api/chat', {
+      const response = await apiFetch('/api/chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           messages: msgs,
+          model: useSettingsStore.getState().selectedModel,
           images: imageDataUrls,
           memory: memoryFacts,
           summary: convId ? useChatStore.getState().conversations.find((c) => c.id === convId)?.summary ?? '' : '',
@@ -220,11 +240,8 @@ export default function ChatInterface() {
             try {
               const parsed = JSON.parse(data);
               if (parsed.error) throw new Error(parsed.error);
-              if (parsed.file) {
-                setGeneratedFiles((prev) => [
-                  ...prev,
-                  { id: `${Date.now()}-${prev.length}`, name: parsed.file.name, mime: parsed.file.mime, base64: parsed.file.base64 },
-                ]);
+              if (parsed.file && convId) {
+                addGeneratedFile(convId, { name: parsed.file.name, mime: parsed.file.mime, base64: parsed.file.base64 });
               }
               if (parsed.summary && convId) {
                 setConversationSummary(convId, String(parsed.summary.text || ''), Number(parsed.summary.upTo) || 0);
@@ -239,10 +256,14 @@ export default function ChatInterface() {
               }
               if (parsed.content) {
                 accumulatedContent += parsed.content;
+                partialContentRef.current = accumulatedContent;
                 setStreamingContent(normalizeCaliliResponse(accumulatedContent));
               }
             } catch (parseError) {
-              if (parseError instanceof Error && parseError.message) throw parseError;
+              // Una linea SSE corrupta ya no aborta la respuesta entera:
+              // solo los errores que manda el servidor se propagan.
+              if (parseError instanceof SyntaxError) continue;
+              throw parseError;
             }
           }
         }
@@ -268,6 +289,8 @@ export default function ChatInterface() {
 
     setLoading(true);
     setStreamingContent('');
+    setStreamingConvId(convId);
+    partialContentRef.current = '';
     cancelRequestedRef.current = false;
 
     const wantsVoice = /\b(habla|hablando|voz|en voz alta|lee|leer)\b/i.test(content);
@@ -290,7 +313,7 @@ export default function ChatInterface() {
       if (docFiles.length > 0) {
         const formData = new FormData();
         docFiles.forEach((file) => formData.append('files', file));
-        const fileResponse = await fetch('/api/files', { method: 'POST', body: formData });
+        const fileResponse = await apiFetch('/api/files', { method: 'POST', body: formData });
         if (!fileResponse.ok) {
           const errorData = await fileResponse.json().catch(() => ({}));
           throw new Error(errorData.error || 'No se pudieron analizar los archivos.');
@@ -301,6 +324,7 @@ export default function ChatInterface() {
         if (extractedText) modelContent += `\n\nContenido extraído de los archivos:\n${extractedText}`;
       }
 
+      if (cancelRequestedRef.current) return;
       {
         // Mensajes frescos del store (ya incluyen el que se acaba de
         // agregar); el ultimo del usuario lleva el contenido enriquecido
@@ -340,6 +364,7 @@ export default function ChatInterface() {
       }
     } finally {
       setLoading(false);
+      setStreamingConvId(null);
     }
   };
 
@@ -359,6 +384,8 @@ export default function ChatInterface() {
     removeMessage(conv.id, lastAssistant.id);
     setLoading(true);
     setStreamingContent('');
+    setStreamingConvId(conv.id);
+    partialContentRef.current = '';
     cancelRequestedRef.current = false;
     try {
       const accumulatedContent = await streamReply(msgs, [], conv.id);
@@ -375,6 +402,7 @@ export default function ChatInterface() {
       }
     } finally {
       setLoading(false);
+      setStreamingConvId(null);
     }
   };
 
@@ -390,19 +418,29 @@ export default function ChatInterface() {
     cancelRequestedRef.current = true;
     activeRequestControllerRef.current?.abort();
     voiceService.stop();
+    // Lo ya transmitido se CONSERVA como mensaje: antes Detener borraba
+    // el 100% de lo que Calili ya habia escrito.
+    const partial = normalizeCaliliResponse(partialContentRef.current).trim();
+    const convId = useChatStore.getState().currentConversationId;
+    if (partial && convId) {
+      addMessage(convId, { role: 'assistant', content: `${partial}\n\n*(Respuesta detenida por ti)*` });
+    }
+    partialContentRef.current = '';
     setStreamingContent('');
+    setStreamingConvId(null);
     setLoading(false);
   };
 
+  const showStreamingHere = streamingConvId !== null && streamingConvId === currentConversationId;
   const displayMessages = [
     ...(currentConversation?.messages || []),
-    ...(isLoading && !streamingContent ? [{
+    ...(showStreamingHere && isLoading && !streamingContent ? [{
       id: 'loading',
       role: 'assistant' as const,
       content: 'Calili está preparando tu respuesta...',
       timestamp: Date.now(),
     }] : []),
-    ...(streamingContent ? [{
+    ...(showStreamingHere && streamingContent ? [{
       id: 'streaming',
       role: 'assistant' as const,
       content: streamingContent,
@@ -486,7 +524,7 @@ export default function ChatInterface() {
       {voiceModeOpen && (
         <VoiceMode
           onClose={() => setVoiceModeOpen(false)}
-          onFile={(file) => setGeneratedFiles((current) => [...current, file])}
+          onFile={(file) => { const cid = useChatStore.getState().currentConversationId; if (cid) addGeneratedFile(cid, file); }}
         />
       )}
     </div>

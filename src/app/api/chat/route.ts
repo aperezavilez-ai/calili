@@ -8,6 +8,8 @@ import {
   type NexusMessage,
 } from '@/lib/nexus-gateway';
 import { buildSystemPrompt } from '@/lib/system-prompt';
+import { requireApiUser } from '@/lib/api-auth';
+import { publicErrorMessage } from '@/lib/response-policy';
 import { toolCapabilities, toolDefinitions, executeTool } from '@/lib/tools';
 import type { GeneratedFile } from '@/lib/file-generator';
 
@@ -29,11 +31,16 @@ function compactHistory(messages: NexusMessage[]): NexusMessage[] {
 
 function errorMessage(error: unknown): string {
   if (error instanceof NexusConfigError) return error.message;
-  if (error instanceof Error) return error.message;
-  return 'NEXUS no respondió.';
+  // Los errores que ve el usuario no nombran proveedores ni traen el
+  // detalle crudo del motor: eso rompia el candado de identidad.
+  return publicErrorMessage(error);
 }
 
 export async function POST(req: NextRequest) {
+  const apiUser = await requireApiUser(req);
+  if (!apiUser) {
+    return NextResponse.json({ error: 'Inicia sesión para usar Calili.' }, { status: 401 });
+  }
   try {
     const body = await req.json();
     const { messages, images } = body ?? {};
@@ -50,6 +57,12 @@ export async function POST(req: NextRequest) {
       return NextResponse.json(
         { error: 'Los mensajes no tienen un formato válido' },
         { status: 400 },
+      );
+    }
+    if (messages.length > 200) {
+      return NextResponse.json(
+        { error: 'La conversación es demasiado larga para una sola petición.' },
+        { status: 413 },
       );
     }
 
@@ -93,10 +106,19 @@ export async function POST(req: NextRequest) {
     const send = (
       controller: ReadableStreamDefaultController,
       payload: Record<string, unknown>,
-    ) => controller.enqueue(encoder.encode(`data: ${JSON.stringify(payload)}\n\n`));
+    ) => {
+      // Si el cliente ya corto, enqueue lanza: se ignora en silencio en
+      // vez de convertir cada desconexion en un error de servidor.
+      try {
+        controller.enqueue(encoder.encode(`data: ${JSON.stringify(payload)}\n\n`));
+      } catch { /* cliente desconectado */ }
+    };
 
     const stream = new ReadableStream({
       async start(controller) {
+        // Latido: sin bytes por minutos (un video generandose), los
+        // proxies cortan la conexion aunque la funcion siga viva.
+        const heartbeat = setInterval(() => send(controller, { status: 'working' }), 15000);
         try {
           send(controller, { status: 'preparing' });
 
@@ -111,17 +133,18 @@ export async function POST(req: NextRequest) {
               : '';
             const clientUpTo = Number((body as { summaryUpTo?: unknown })?.summaryUpTo) || 0;
             let summaryText = '';
-            if (clientSummary && clientUpTo === droppedCount) {
+            const effectiveUpTo = Math.min(clientUpTo, droppedCount);
+            if (clientSummary && effectiveUpTo === droppedCount) {
               summaryText = clientSummary;
             } else if (process.env.GROQ_API_KEY) {
               try {
-                const sliceToSummarize = conversation.slice(Math.min(clientUpTo, droppedCount), droppedCount);
+                const sliceToSummarize = conversation.slice(effectiveUpTo, droppedCount);
                 const transcript = sliceToSummarize
                   .map((m) => `${m.role === 'user' ? 'USUARIO' : 'CALILI'}: ${m.content}`)
                   .join('\n')
                   .slice(0, 24000);
                 if (transcript) {
-                  summaryText = await summarizeHistory(clientSummary, transcript);
+                  summaryText = await summarizeHistory(effectiveUpTo > 0 ? clientSummary : '', transcript);
                   send(controller, { summary: { text: summaryText, upTo: droppedCount } });
                 }
               } catch (summaryError) {
@@ -158,12 +181,13 @@ export async function POST(req: NextRequest) {
                   req.signal,
                 );
                 if (completion.toolCalls.length > 0) {
+                  const callsToRun = completion.toolCalls.slice(0, 3);
                   const workingMessages: unknown[] = [
                     ...fullMessages,
-                    { role: 'assistant', content: completion.content || null, tool_calls: completion.toolCalls },
+                    { role: 'assistant', content: completion.content || null, tool_calls: callsToRun },
                   ];
                   const files: GeneratedFile[] = [];
-                  for (const call of completion.toolCalls.slice(0, 3)) {
+                  for (const call of callsToRun) {
                     const execution = await executeTool(call.function.name, call.function.arguments, { images: imageList });
                     if (execution.file) files.push(execution.file);
                     if (execution.memoryEvent) send(controller, { memory: execution.memoryEvent });
@@ -182,9 +206,10 @@ export async function POST(req: NextRequest) {
               }
             }
 
-            const visionMessages: unknown[] = [{ role: 'system', content: systemPrompt }];
+            const visionMessages: unknown[] = [{ role: 'system', content: systemPrompt + memoryBlock }];
+            const lastUserIndex = history.map((m) => m.role).lastIndexOf('user');
             history.forEach((message, index) => {
-              const isLastUser = index === history.length - 1 && message.role === 'user';
+              const isLastUser = index === lastUserIndex;
               if (isLastUser) {
                 visionMessages.push({
                   role: 'user',
@@ -215,11 +240,12 @@ export async function POST(req: NextRequest) {
               if (memoryDefs.length > 0) {
                 const completion = await completeWithTools(fullMessages as unknown[], memoryDefs, req.signal);
                 if (completion.toolCalls.length > 0) {
+                  const callsToRun = completion.toolCalls.slice(0, 3);
                   const workingMessages: unknown[] = [
                     ...fullMessages,
-                    { role: 'assistant', content: completion.content || null, tool_calls: completion.toolCalls },
+                    { role: 'assistant', content: completion.content || null, tool_calls: callsToRun },
                   ];
-                  for (const call of completion.toolCalls.slice(0, 3)) {
+                  for (const call of callsToRun) {
                     const execution = await executeTool(call.function.name, call.function.arguments, { images: imageList });
                     if (execution.memoryEvent) send(controller, { memory: execution.memoryEvent });
                     workingMessages.push({ role: 'tool', tool_call_id: call.id, content: execution.resultForModel });
@@ -252,16 +278,17 @@ export async function POST(req: NextRequest) {
               );
 
               if (completion.toolCalls.length > 0) {
+                const callsToRun = completion.toolCalls.slice(0, 3);
                 const workingMessages: unknown[] = [
                   ...fullMessages,
                   {
                     role: 'assistant',
                     content: completion.content || null,
-                    tool_calls: completion.toolCalls,
+                    tool_calls: callsToRun,
                   },
                 ];
                 const files: GeneratedFile[] = [];
-                for (const call of completion.toolCalls.slice(0, 3)) {
+                for (const call of callsToRun) {
                   const execution = await executeTool(call.function.name, call.function.arguments, { images: imageList });
                   if (execution.file) files.push(execution.file);
                   if (execution.memoryEvent) send(controller, { memory: execution.memoryEvent });
@@ -307,7 +334,8 @@ export async function POST(req: NextRequest) {
         } catch (error) {
           send(controller, { error: errorMessage(error) });
         } finally {
-          controller.close();
+          clearInterval(heartbeat);
+          try { controller.close(); } catch { /* ya cerrado */ }
         }
       },
     });
