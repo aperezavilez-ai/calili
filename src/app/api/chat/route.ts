@@ -67,13 +67,24 @@ export async function POST(req: NextRequest) {
       vision: true,
       imageGen: caps.imageGen,
       imageEdit: caps.imageEdit,
+      memory: caps.memory,
     }) + (voiceMode
       ? '\n\nMODO VOZ (el usuario te escucha, no te lee): responde conversacional y breve, de 1 a 3 frases cortas. Nada de listas, tablas, encabezados ni markdown.'
       : '');
 
+    const memoryFacts: string[] = Array.isArray((body as { memory?: unknown })?.memory)
+      ? ((body as { memory: unknown[] }).memory
+          .filter((f): f is string => typeof f === 'string' && f.trim().length > 0)
+          .map((f) => f.trim().slice(0, 200))
+          .slice(0, 40))
+      : [];
+    const memoryBlock = memoryFacts.length
+      ? `\n\nMEMORIA DEL USUARIO (hechos que recuerdas de él de conversaciones anteriores; úsalos con naturalidad):\n${memoryFacts.map((f) => `- ${f}`).join('\n')}`
+      : '';
+
     const conversation = (messages as NexusMessage[]).filter((m) => m.role !== 'system');
     const history = compactHistory(conversation);
-    const fullMessages: NexusMessage[] = [{ role: 'system', content: systemPrompt }, ...history];
+    const fullMessages: NexusMessage[] = [{ role: 'system', content: systemPrompt + memoryBlock }, ...history];
 
     const encoder = new TextEncoder();
     const send = (
@@ -111,6 +122,7 @@ export async function POST(req: NextRequest) {
                   for (const call of completion.toolCalls.slice(0, 3)) {
                     const execution = await executeTool(call.function.name, call.function.arguments, { images: imageList });
                     if (execution.file) files.push(execution.file);
+                    if (execution.memoryEvent) send(controller, { memory: execution.memoryEvent });
                     workingMessages.push({ role: 'tool', tool_call_id: call.id, content: execution.resultForModel });
                   }
                   for (const file of files) send(controller, { file });
@@ -148,9 +160,44 @@ export async function POST(req: NextRequest) {
             return;
           }
 
+          // --- Modo voz: pasada ligera SOLO con memoria ------------------
+          // La voz salta las herramientas pesadas por latencia, pero
+          // recordar/olvidar sí viajan: Luis probó decirle "soy Luis"
+          // hablando y la memoria es justo lo que espera que funcione.
+          let handled = false;
+          if (voiceMode && process.env.GROQ_API_KEY) {
+            try {
+              const memoryDefs = toolDefinitions({ ...caps, createFiles: false, webSearch: false, readRepos: false, imageGen: false });
+              if (memoryDefs.length > 0) {
+                const completion = await completeWithTools(fullMessages as unknown[], memoryDefs, req.signal);
+                if (completion.toolCalls.length > 0) {
+                  const workingMessages: unknown[] = [
+                    ...fullMessages,
+                    { role: 'assistant', content: completion.content || null, tool_calls: completion.toolCalls },
+                  ];
+                  for (const call of completion.toolCalls.slice(0, 3)) {
+                    const execution = await executeTool(call.function.name, call.function.arguments, { images: imageList });
+                    if (execution.memoryEvent) send(controller, { memory: execution.memoryEvent });
+                    workingMessages.push({ role: 'tool', tool_call_id: call.id, content: execution.resultForModel });
+                  }
+                  for await (const chunk of streamNexusChat(workingMessages as unknown as NexusMessage[], { signal: req.signal })) {
+                    send(controller, { content: chunk });
+                  }
+                  handled = true;
+                } else if (completion.content) {
+                  const pieces = completion.content.match(/[\s\S]{1,120}/g) ?? [];
+                  for (const piece of pieces) send(controller, { content: piece });
+                  handled = true;
+                }
+              }
+            } catch (error) {
+              if (error instanceof NexusConfigError) throw error;
+              console.error('Calili: pasada de memoria en voz falló, se usa streaming directo', error);
+            }
+          }
+
           // --- Camino con herramientas (solo Groq) ------------------------
           const definitions = toolDefinitions(caps);
-          let handled = false;
           // En modo voz se salta la pasada de herramientas: la latencia manda.
           if (!voiceMode && definitions.length > 0 && process.env.GROQ_API_KEY) {
             try {
@@ -173,6 +220,7 @@ export async function POST(req: NextRequest) {
                 for (const call of completion.toolCalls.slice(0, 3)) {
                   const execution = await executeTool(call.function.name, call.function.arguments, { images: imageList });
                   if (execution.file) files.push(execution.file);
+                  if (execution.memoryEvent) send(controller, { memory: execution.memoryEvent });
                   workingMessages.push({
                     role: 'tool',
                     tool_call_id: call.id,

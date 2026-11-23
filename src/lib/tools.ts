@@ -12,6 +12,7 @@ export interface ToolCapabilities {
   readRepos: boolean;
   imageGen: boolean;
   imageEdit: boolean;
+  memory: boolean;
 }
 
 export function toolCapabilities(): ToolCapabilities {
@@ -21,6 +22,7 @@ export function toolCapabilities(): ToolCapabilities {
     readRepos: true,
     imageGen: true,
     imageEdit: Boolean(process.env.OPENAI_API_KEY),
+    memory: true,
   };
 }
 
@@ -76,6 +78,39 @@ export function toolDefinitions(caps: ToolCapabilities) {
     });
   }
 
+  if (caps.memory) {
+    tools.push({
+      type: 'function',
+      function: {
+        name: 'recordar',
+        description:
+          'Guarda un hecho durable sobre el usuario en su memoria de largo plazo, para recordarlo en TODAS las conversaciones futuras. Úsala en cuanto el usuario te diga su nombre, su negocio, un dato personal o profesional, una preferencia estable o te pida recordar algo. El hecho va en una sola frase clara en tercera persona (ej. "El usuario se llama Luis", "Su estudio de tatuajes se llama Rock My Body"). No guardes cosas pasajeras de esta conversación.',
+        parameters: {
+          type: 'object',
+          properties: {
+            hecho: { type: 'string', description: 'El hecho a recordar, en una frase.' },
+          },
+          required: ['hecho'],
+        },
+      },
+    });
+    tools.push({
+      type: 'function',
+      function: {
+        name: 'olvidar',
+        description:
+          'Borra de la memoria de largo plazo un hecho que el usuario pida olvidar o corrija. Pásale el hecho tal como estaba guardado, o su idea central.',
+        parameters: {
+          type: 'object',
+          properties: {
+            hecho: { type: 'string', description: 'El hecho a olvidar.' },
+          },
+          required: ['hecho'],
+        },
+      },
+    });
+  }
+
   if (caps.webSearch) {
     tools.push({
       type: 'function',
@@ -118,6 +153,7 @@ export function toolDefinitions(caps: ToolCapabilities) {
 export interface ToolExecution {
   resultForModel: string;
   file?: GeneratedFile;
+  memoryEvent?: { action: 'add' | 'remove'; fact: string };
 }
 
 async function executeSearch(consulta: string): Promise<string> {
@@ -207,6 +243,22 @@ export async function executeTool(name: string, rawArgs: string, context?: { ima
         return {
           resultForModel: `Imagen creada: ${result.file.name} (motor: ${result.engine}). Ya se le mostró al usuario con vista previa y botón de descarga. ${result.note ?? ''} Confírmalo en una frase breve.`,
           file: result.file,
+        };
+      }
+      case 'recordar': {
+        const hecho = String(args.hecho ?? '').trim();
+        if (!hecho) return { resultForModel: 'No llegó el hecho a recordar.' };
+        return {
+          resultForModel: `Hecho guardado en la memoria de largo plazo: "${hecho}". El usuario ya lo puede dar por recordado para siempre; confírmalo en una frase breve y natural.`,
+          memoryEvent: { action: 'add', fact: hecho },
+        };
+      }
+      case 'olvidar': {
+        const hecho = String(args.hecho ?? '').trim();
+        if (!hecho) return { resultForModel: 'No llegó el hecho a olvidar.' };
+        return {
+          resultForModel: `Hecho eliminado de la memoria de largo plazo: "${hecho}". Confírmalo en una frase breve.`,
+          memoryEvent: { action: 'remove', fact: hecho },
         };
       }
       case 'buscar_web':

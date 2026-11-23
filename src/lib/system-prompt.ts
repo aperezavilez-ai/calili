@@ -10,6 +10,7 @@ export interface CaliliCapabilities {
   vision: boolean;
   imageGen: boolean;
   imageEdit: boolean;
+  memory: boolean;
 }
 
 export function buildSystemPrompt(capabilities: CaliliCapabilities): string {
@@ -37,6 +38,12 @@ export function buildSystemPrompt(capabilities: CaliliCapabilities): string {
       capabilities.imageEdit
         ? 'crear_imagen: crea imágenes reales JPG/PNG desde una descripción y también EDITA o RECREA la imagen que el usuario adjunte (marca usar_adjunta=true y describe la imagen final completa). La imagen se muestra con vista previa y descarga.'
         : 'crear_imagen: crea imágenes reales JPG/PNG desde una descripción. Si el usuario adjunta una imagen y pide recrearla, describe la imagen final completa en el prompt y marca usar_adjunta=true: se generará una imagen nueva con esa descripción (la edición directa píxel a píxel aún no está conectada).',
+    );
+  }
+
+  if (capabilities.memory) {
+    tools.push(
+      'recordar / olvidar: tu memoria de largo plazo. Cuando el usuario te diga un dato durable sobre él (nombre, negocio, preferencias, datos de su trabajo), llama recordar EN ESE MOMENTO, sin esperar a que te lo pida. Si corrige o pide olvidar algo, llama olvidar. Los hechos que ya recuerdas llegan en la sección MEMORIA DEL USUARIO: úsalos con naturalidad (llámalo por su nombre, ten presentes su negocio y sus datos) sin recitarlos como lista.',
     );
   }
 

@@ -117,3 +117,9 @@ Motivo (juicio de Luis, 2026-11-23): las respuestas salían de miles de palabras
 - v2.5.0 incluida: voz en máximo 2 bloques con Edge Dalia 96 kbps (y OpenAI TTS si hay clave) + banner de instalación PWA en la app.
 - Efectos auditivos de la orbe (lib/earcons.ts, WebAudio sin archivos): pop suave al empezar a escuchar, chime cálido de dos notas cuando Calili va a hablar, descenso al pausar, ascenso al reanudar y golpe grave suave en error. Volumen bajo por diseño.
 - Gesto móvil corregido: deslizar desde el borde exacto invocaba el «atrás» del sistema y cerraba la PWA. Ahora el gesto de apertura nace fuera de la zona del sistema (28-140px) y hay un centinela de historial: un «atrás» accidental cierra el panel o se consume, sin salir de la app.
+
+## v2.7.0 — Memoria de largo plazo (Fase 4, primera parte)
+- Causa del «no me recordó»: Calili no tenía memoria entre conversaciones; cada chat nacía de cero.
+- Herramientas recordar/olvidar: el modelo guarda hechos durables (nombre, negocio, preferencias) en el momento en que el usuario los dice, sin esperar a que se lo pidan. Los hechos viajan en cada mensaje (sección MEMORIA DEL USUARIO del prompt) y se usan con naturalidad.
+- Persistencia doble: localStorage (funciona sin cuenta y sin migración) + tabla memory_facts en Supabase (migración 003, RLS por usuario) cuando hay sesión; ambas se fusionan sin duplicados. El guardado lo aplica el cliente al recibir el evento {memory} del SSE.
+- El modo voz también recuerda: su pasada ligera incluye solo las herramientas de memoria (las pesadas siguen fuera por latencia).

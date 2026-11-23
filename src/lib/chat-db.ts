@@ -99,3 +99,28 @@ export async function uploadLocalConversation(userId: string, conversation: Conv
     await insertMessage(conversation.id, message);
   }
 }
+
+// --- Memoria de largo plazo (migración 003) -------------------------------
+
+export async function fetchMemoryFactsDb(userId: string): Promise<string[]> {
+  const client = db();
+  const { data, error } = await client
+    .from('memory_facts')
+    .select('fact')
+    .eq('user_id', userId)
+    .order('created_at', { ascending: true });
+  if (error) throw error;
+  return (data ?? []).map((row) => String((row as { fact: string }).fact));
+}
+
+export async function insertMemoryFactDb(userId: string, fact: string): Promise<void> {
+  const client = db();
+  const { error } = await client.from('memory_facts').insert({ user_id: userId, fact });
+  if (error) throw error;
+}
+
+export async function deleteMemoryFactDb(userId: string, fact: string): Promise<void> {
+  const client = db();
+  const { error } = await client.from('memory_facts').delete().eq('user_id', userId).eq('fact', fact);
+  if (error) throw error;
+}

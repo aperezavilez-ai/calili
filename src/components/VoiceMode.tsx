@@ -6,6 +6,7 @@ import { useChatStore } from '@/store/chat-store';
 import { useSettingsStore } from '@/store/settings-store';
 import { normalizeCaliliResponse } from '@/lib/response-policy';
 import { playEarcon } from '@/lib/earcons';
+import { loadMemoryFacts, saveMemoryFact, removeMemoryFact } from '@/lib/memory-facts';
 
 export interface GeneratedFile { id: string; name: string; mime: string; base64: string }
 
@@ -48,6 +49,7 @@ export default function VoiceMode({ onClose, onFile }: VoiceModeProps) {
   const streamDoneRef = useRef(false);
   const turnDoneRef = useRef<(() => void) | null>(null);
   const speakCueRef = useRef(false);
+  const factsRef = useRef<string[]>([]);
 
   const stopTracks = useCallback(() => {
     cancelAnimationFrame(rafRef.current);
@@ -137,7 +139,7 @@ export default function VoiceMode({ onClose, onFile }: VoiceModeProps) {
     const res = await fetch('/api/chat', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ messages: history, model: useSettingsStore.getState().selectedModel, voice: true }),
+      body: JSON.stringify({ messages: history, model: useSettingsStore.getState().selectedModel, voice: true, memory: factsRef.current }),
     });
     if (!res.ok || !res.body) throw new Error('chat');
 
@@ -182,6 +184,12 @@ export default function VoiceMode({ onClose, onFile }: VoiceModeProps) {
         try {
           const parsed = JSON.parse(data);
           if (parsed.file) onFile(parsed.file as GeneratedFile);
+          if (parsed.memory) {
+            const userId = useChatStore.getState().dbUserId;
+            const fact = String(parsed.memory.fact || '');
+            const apply = parsed.memory.action === 'add' ? saveMemoryFact(userId, fact) : removeMemoryFact(userId, fact);
+            void apply.then((facts) => { factsRef.current = facts; }).catch(() => undefined);
+          }
           if (parsed.content) feedContent(String(parsed.content));
           if (parsed.error) throw new Error(parsed.error);
         } catch (err) {
@@ -290,7 +298,10 @@ export default function VoiceMode({ onClose, onFile }: VoiceModeProps) {
 
   useEffect(() => {
     openRef.current = true;
-    void listenOnce();
+    void loadMemoryFacts(useChatStore.getState().dbUserId)
+      .then((facts) => { factsRef.current = facts; })
+      .catch(() => undefined)
+      .finally(() => { if (openRef.current) void listenOnce(); });
     return () => { openRef.current = false; stopTracks(); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);

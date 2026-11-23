@@ -13,6 +13,7 @@ import { AuthScreen } from '@/components/AuthScreen';
 import VoiceMode from '@/components/VoiceMode';
 import { normalizeCaliliResponse } from '@/lib/response-policy';
 import { InstallBanner } from '@/components/InstallBanner';
+import { loadMemoryFacts, saveMemoryFact, removeMemoryFact } from '@/lib/memory-facts';
 import { Download } from 'lucide-react';
 
 export default function ChatInterface() {
@@ -37,6 +38,15 @@ export default function ChatInterface() {
   const [streamingContent, setStreamingContent] = useState('');
   const [generatedFiles, setGeneratedFiles] = useState<Array<{ id: string; name: string; mime: string; base64: string }>>([]);
   const [voiceModeOpen, setVoiceModeOpen] = useState(false);
+  const [memoryFacts, setMemoryFacts] = useState<string[]>([]);
+
+  // Memoria de largo plazo: se carga al entrar (local + Supabase) y viaja
+  // en cada mensaje para que Calili recuerde entre conversaciones.
+  useEffect(() => {
+    if (authStatus === 'local' || authStatus === 'signedIn') {
+      void loadMemoryFacts(useChatStore.getState().dbUserId).then(setMemoryFacts).catch(() => undefined);
+    }
+  }, [authStatus]);
   const activeRequestControllerRef = useRef<AbortController | null>(null);
   const cancelRequestedRef = useRef(false);
   const touchStartX = useRef<number | null>(null);
@@ -217,7 +227,7 @@ export default function ChatInterface() {
         const response = await fetch('/api/chat', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ messages: msgs, images: imageDataUrls }),
+          body: JSON.stringify({ messages: msgs, images: imageDataUrls, memory: memoryFacts }),
           signal: chatController.signal,
         });
 
@@ -253,6 +263,14 @@ export default function ChatInterface() {
                     ...prev,
                     { id: `${Date.now()}-${prev.length}`, name: parsed.file.name, mime: parsed.file.mime, base64: parsed.file.base64 },
                   ]);
+                }
+                if (parsed.memory) {
+                  const userId = useChatStore.getState().dbUserId;
+                  if (parsed.memory.action === 'add') {
+                    void saveMemoryFact(userId, String(parsed.memory.fact || '')).then(setMemoryFacts).catch(() => undefined);
+                  } else {
+                    void removeMemoryFact(userId, String(parsed.memory.fact || '')).then(setMemoryFacts).catch(() => undefined);
+                  }
                 }
                 if (parsed.content) {
                   accumulatedContent += parsed.content;
