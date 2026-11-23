@@ -38,16 +38,28 @@ export default function ChatInterface() {
   const [voiceModeOpen, setVoiceModeOpen] = useState(false);
   const activeRequestControllerRef = useRef<AbortController | null>(null);
   const cancelRequestedRef = useRef(false);
+  const touchStartX = useRef<number | null>(null);
+  const handleTouchStart = (e: React.TouchEvent) => {
+    touchStartX.current = e.touches[0].clientX;
+  };
+  const handleTouchEnd = (e: React.TouchEvent) => {
+    if (touchStartX.current === null) return;
+    const dx = e.changedTouches[0].clientX - touchStartX.current;
+    const startX = touchStartX.current;
+    touchStartX.current = null;
+    if (!isSidebarOpen && startX < 28 && dx > 64 && window.innerWidth < 768) toggleSidebar();
+  };
 
   const currentConversation = conversations.find((c) => c.id === currentConversationId);
 
+  // Solo al montar: en movil el panel arranca cerrado. (El efecto anterior
+  // dependia de isSidebarOpen y cerraba el panel 500 ms despues de abrirlo.)
   useEffect(() => {
-    const closeMobileSidebar = window.setTimeout(() => {
-      if (window.innerWidth < 768 && isSidebarOpen) toggleSidebar();
-    }, 500);
-
-    return () => window.clearTimeout(closeMobileSidebar);
-  }, [isSidebarOpen, toggleSidebar]);
+    if (window.innerWidth < 768 && useChatStore.getState().isSidebarOpen) {
+      useChatStore.getState().toggleSidebar();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   useEffect(() => {
     if (!isSupabaseConfigured || !supabase) {
@@ -303,7 +315,11 @@ export default function ChatInterface() {
   }
 
   return (
-    <div className="relative flex h-screen bg-chat-bg text-white overflow-hidden">
+    <div
+      className="relative flex h-screen bg-chat-bg text-white overflow-hidden"
+      onTouchStart={handleTouchStart}
+      onTouchEnd={handleTouchEnd}
+    >
       <Sidebar userEmail={userEmail} onSignOut={signOut} />
       <main className="flex-1 flex flex-col min-h-0 min-w-0 w-full">
         <MessageList messages={displayMessages} />

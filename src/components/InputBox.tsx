@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useRef, useEffect } from 'react';
-import { Send, Mic, MicOff, Square, Paperclip, X, AudioWaveform } from 'lucide-react';
+import { Send, Mic, Square, Paperclip, X } from 'lucide-react';
 
 interface InputBoxProps {
   onSendMessage: (message: string, files: File[]) => void;
@@ -12,14 +12,9 @@ interface InputBoxProps {
 
 export function InputBox({ onSendMessage, onStopMessage, isLoading, onVoiceMode }: InputBoxProps) {
   const [input, setInput] = useState('');
-  const [isRecording, setIsRecording] = useState(false);
-  const [isTranscribing, setIsTranscribing] = useState(false);
   const [attachments, setAttachments] = useState<File[]>([]);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const recorderRef = useRef<MediaRecorder | null>(null);
-  const chunksRef = useRef<Blob[]>([]);
-  const discardRef = useRef(false);
 
   useEffect(() => {
     if (textareaRef.current) {
@@ -35,11 +30,6 @@ export function InputBox({ onSendMessage, onStopMessage, isLoading, onVoiceMode 
   const handleSubmit = () => {
     if ((!input.trim() && attachments.length === 0) || isLoading) return;
 
-    if (recorderRef.current && isRecording) {
-      discardRef.current = true;
-      recorderRef.current.stop();
-      setIsRecording(false);
-    }
     onSendMessage(input.trim() || 'Analiza los archivos adjuntos.', attachments);
     setInput('');
     setAttachments([]);
@@ -81,56 +71,6 @@ export function InputBox({ onSendMessage, onStopMessage, isLoading, onVoiceMode 
     }
   };
 
-  const toggleListening = async () => {
-    if (isTranscribing) return;
-
-    if (isRecording) {
-      recorderRef.current?.stop();
-      setIsRecording(false);
-      return;
-    }
-
-    if (window.speechSynthesis?.speaking) {
-      alert('Espera a que Calili termine de hablar antes de activar el micrófono.');
-      return;
-    }
-
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      const recorder = new MediaRecorder(stream);
-      chunksRef.current = [];
-      discardRef.current = false;
-      recorder.ondataavailable = (event) => {
-        if (event.data.size > 0) chunksRef.current.push(event.data);
-      };
-      recorder.onstop = async () => {
-        stream.getTracks().forEach((track) => track.stop());
-        if (discardRef.current) return;
-        const blob = new Blob(chunksRef.current, { type: recorder.mimeType || 'audio/webm' });
-        if (blob.size === 0) return;
-        setIsTranscribing(true);
-        try {
-          const formData = new FormData();
-          formData.append('audio', blob, 'dictado.webm');
-          const response = await fetch('/api/transcribe', { method: 'POST', body: formData });
-          const data = await response.json().catch(() => ({}));
-          if (!response.ok) throw new Error(data.error || 'No se pudo transcribir.');
-          if (data.text) {
-            setInput((prev) => (prev ? `${prev} ${data.text}` : data.text));
-          }
-        } catch (error) {
-          alert(error instanceof Error ? error.message : 'No se pudo transcribir el audio.');
-        } finally {
-          setIsTranscribing(false);
-        }
-      };
-      recorderRef.current = recorder;
-      recorder.start();
-      setIsRecording(true);
-    } catch {
-      alert('No se pudo acceder al micrófono. Revisa el permiso del navegador.');
-    }
-  };
 
   return (
     <div className="border-t border-white/10 bg-chat-bg">
@@ -168,30 +108,12 @@ export function InputBox({ onSendMessage, onStopMessage, isLoading, onVoiceMode 
 
           {/* Botón de voz */}
           <button
-            onClick={toggleListening}
-            disabled={isTranscribing}
-            className={`p-2 rounded-xl transition-all flex-shrink-0 ${
-              isRecording
-                ? 'bg-red-500 text-white animate-pulse'
-                : 'hover:bg-white/10 text-white/60'
-            }`}
-            title={isTranscribing ? 'Transcribiendo…' : 'Dictar con tu voz (Whisper)'}
-          >
-            {isRecording ? (
-              <MicOff className="w-5 h-5" />
-            ) : (
-              <Mic className="w-5 h-5" />
-            )}
-          </button>
-
-          {/* Botón modo voz (orbe) */}
-          <button
             type="button"
             onClick={() => onVoiceMode?.()}
             className="p-2 rounded-xl transition-all flex-shrink-0 hover:bg-white/10 text-white/60 hover:text-white"
-            title="Modo voz: conversa con Calili hablando"
+            title="Hablar con Calili (modo voz)"
           >
-            <AudioWaveform className="w-5 h-5" />
+            <Mic className="w-5 h-5" />
           </button>
 
           {/* Botón enviar */}

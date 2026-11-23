@@ -3,7 +3,7 @@
 import { useChatStore } from '@/store/chat-store';
 import { useSettingsStore } from '@/store/settings-store';
 import { MessageSquarePlus, Trash2, Edit2, Check, X, Menu, Settings, Download, LogOut } from 'lucide-react';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { format } from 'date-fns';
 import { es } from 'date-fns/locale';
 import { voiceService } from '@/lib/voice-service';
@@ -41,6 +41,18 @@ function usePwaInstall() {
   return { canInstall: Boolean(installEvent), install };
 }
 
+function useIosInstallHint() {
+  const [showIosInstall, setShowIosInstall] = useState(false);
+  useEffect(() => {
+    const ua = window.navigator.userAgent || '';
+    const isIos = /iphone|ipad|ipod/i.test(ua);
+    const standalone = window.matchMedia('(display-mode: standalone)').matches
+      || (window.navigator as unknown as { standalone?: boolean }).standalone === true;
+    setShowIosInstall(isIos && !standalone);
+  }, []);
+  return showIosInstall;
+}
+
 export function Sidebar({ userEmail, onSignOut }: { userEmail?: string; onSignOut?: () => void }) {
   const {
     conversations,
@@ -61,6 +73,9 @@ export function Sidebar({ userEmail, onSignOut }: { userEmail?: string; onSignOu
 
   const { voiceEnabled, voiceGender, setVoiceEnabled, setVoiceGender } = useSettingsStore();
   const { canInstall, install } = usePwaInstall();
+  const showIosInstall = useIosInstallHint();
+  const [iosHintOpen, setIosHintOpen] = useState(false);
+  const asideTouchX = useRef<number | null>(null);
 
   const toggleVoice = () => {
     if (voiceEnabled) voiceService.stop();
@@ -119,7 +134,22 @@ export function Sidebar({ userEmail, onSignOut }: { userEmail?: string; onSignOu
   }
 
   return (
-    <aside className="fixed inset-y-0 left-0 z-40 w-[min(80vw,16rem)] bg-chat-sidebar flex flex-col border-r border-white/10 md:relative md:w-64">
+    <>
+      <div
+        className="fixed inset-0 z-30 bg-black/50 md:hidden"
+        onClick={toggleSidebar}
+        aria-hidden="true"
+      />
+      <aside
+        className="fixed inset-y-0 left-0 z-40 w-[min(80vw,16rem)] bg-chat-sidebar flex flex-col border-r border-white/10 md:relative md:w-64 animate-[calili-slide-in_0.25s_ease-out]"
+        onTouchStart={(e) => { asideTouchX.current = e.touches[0].clientX; }}
+        onTouchEnd={(e) => {
+          if (asideTouchX.current === null) return;
+          const dx = e.changedTouches[0].clientX - asideTouchX.current;
+          asideTouchX.current = null;
+          if (dx < -64 && window.innerWidth < 768) toggleSidebar();
+        }}
+      >
       {/* Header */}
       <div className="p-4 border-b border-white/10">
         <div className="flex items-center justify-between mb-4">
@@ -136,9 +166,9 @@ export function Sidebar({ userEmail, onSignOut }: { userEmail?: string; onSignOu
           >
             <Settings className="w-5 h-5" />
           </button>
-          {canInstall && (
+          {(canInstall || showIosInstall) && (
             <button
-              onClick={install}
+              onClick={() => { if (canInstall) { void install(); } else { setIosHintOpen((v) => !v); } }}
               className="p-2 rounded-lg hover:bg-chat-hover transition-colors text-cyan-300"
               title="Instalar Calili"
               aria-label="Instalar Calili"
@@ -147,6 +177,15 @@ export function Sidebar({ userEmail, onSignOut }: { userEmail?: string; onSignOu
             </button>
           )}
         </div>
+
+        {iosHintOpen && (
+          <div className="mb-4 p-4 rounded-lg bg-cyan-500/10 border border-cyan-300/20 space-y-2 text-sm text-white/80">
+            <p className="font-semibold text-cyan-200">Instalar Calili en iPhone</p>
+            <p>1. Toca el botón <strong>Compartir</strong> de Safari (el cuadro con la flecha hacia arriba).</p>
+            <p>2. Elige <strong>«Agregar a pantalla de inicio»</strong>.</p>
+            <p>3. Toca <strong>Agregar</strong>. Calili queda con su icono, a pantalla completa, y se actualiza sola con cada despliegue.</p>
+          </div>
+        )}
 
         {/* Panel de configuración de voz */}
         {showSettings && (
@@ -308,5 +347,7 @@ export function Sidebar({ userEmail, onSignOut }: { userEmail?: string; onSignOu
         </div>
       </div>
     </aside>
+    </>
+
   );
 }

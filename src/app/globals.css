@@ -84,3 +84,8 @@ code {
   transform: translateY(0);
   transition: opacity 300ms, transform 300ms;
 }
+
+@keyframes calili-slide-in {
+  from { transform: translateX(-100%); }
+  to { transform: translateX(0); }
+}

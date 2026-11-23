@@ -1,10 +1,11 @@
 'use client';
 
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { X, MicOff } from 'lucide-react';
+import { X, Mic, MicOff } from 'lucide-react';
 import { useChatStore } from '@/store/chat-store';
 import { useSettingsStore } from '@/store/settings-store';
 import { normalizeCaliliResponse } from '@/lib/response-policy';
+
 export interface GeneratedFile { id: string; name: string; mime: string; base64: string }
 
 type Phase = 'listening' | 'thinking' | 'speaking' | 'error';
@@ -13,6 +14,9 @@ interface VoiceModeProps {
   onClose: () => void;
   onFile: (file: GeneratedFile) => void;
 }
+
+const MALE_VOICE = /pablo|jorge|raul|raúl|david|carlos|miguel|diego|juan|masculin|male\b|hombre/i;
+const FEMALE_VOICE = /dalia|paulina|sabina|elena|elvira|ximena|lucia|lucía|helena|laura|maria|maría|female|mujer|google español/i;
 
 function plainForSpeech(markdown: string): string {
   return markdown
@@ -26,20 +30,22 @@ function plainForSpeech(markdown: string): string {
     .trim();
 }
 
-function splitSentences(text: string): string[] {
-  const parts = text.match(/[^.!?…]+[.!?…]+["»)]?|\S[^.!?…]*$/g) || [text];
-  return parts.map((p) => p.trim()).filter((p) => p.length > 1);
-}
-
 export default function VoiceMode({ onClose, onFile }: VoiceModeProps) {
   const [phase, setPhase] = useState<Phase>('listening');
   const [caption, setCaption] = useState('Te escucho…');
   const [level, setLevel] = useState(0);
+  const [muted, setMuted] = useState(false);
+  const mutedRef = useRef(false);
+  const cancelPlayRef = useRef<(() => void) | null>(null);
   const openRef = useRef(true);
   const recorderRef = useRef<MediaRecorder | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const rafRef = useRef<number>(0);
+  const queueRef = useRef<Array<{ text: string; audio: Promise<Blob | null> }>>([]);
+  const pumpingRef = useRef(false);
+  const streamDoneRef = useRef(false);
+  const turnDoneRef = useRef<(() => void) | null>(null);
 
   const stopTracks = useCallback(() => {
     cancelAnimationFrame(rafRef.current);
@@ -51,47 +57,69 @@ export default function VoiceMode({ onClose, onFile }: VoiceModeProps) {
     streamRef.current = null;
     if (audioRef.current) { audioRef.current.pause(); audioRef.current = null; }
     if (typeof window !== 'undefined' && 'speechSynthesis' in window) window.speechSynthesis.cancel();
+    queueRef.current = [];
+  }, []);
+
+  const fetchSpeakAudio = useCallback((text: string): Promise<Blob | null> => {
+    return fetch('/api/speak', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text }),
+    })
+      .then((res) => (res.ok ? res.blob() : null))
+      .catch(() => null);
   }, []);
 
   const speakWithBrowser = useCallback((text: string) => new Promise<void>((resolve) => {
     if (!('speechSynthesis' in window)) { resolve(); return; }
     const utter = new SpeechSynthesisUtterance(text);
     utter.lang = 'es-MX';
-    const voice = window.speechSynthesis.getVoices().find((v) => v.lang.startsWith('es') && /dalia|paulina|female|mujer/i.test(v.name))
-      || window.speechSynthesis.getVoices().find((v) => v.lang.startsWith('es'));
+    const voices = window.speechSynthesis.getVoices().filter((v) => v.lang.startsWith('es'));
+    const voice = voices.find((v) => FEMALE_VOICE.test(v.name))
+      || voices.find((v) => !MALE_VOICE.test(v.name))
+      || voices[0];
     if (voice) utter.voice = voice;
     utter.onend = () => resolve();
     utter.onerror = () => resolve();
     window.speechSynthesis.speak(utter);
   }), []);
 
-  const speak = useCallback(async (text: string) => {
-    const clean = plainForSpeech(text);
-    if (!clean) return;
-    const sentences = splitSentences(clean).slice(0, 8);
-    for (const sentence of sentences) {
-      if (!openRef.current) return;
-      try {
-        const res = await fetch('/api/speak', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ text: sentence }),
-        });
-        if (!res.ok) throw new Error('speak');
-        const blob = await res.blob();
+  const pumpQueue = useCallback(async () => {
+    if (pumpingRef.current) return;
+    pumpingRef.current = true;
+    while (openRef.current && !mutedRef.current && queueRef.current.length > 0) {
+      const item = queueRef.current.shift()!;
+      const blob = await item.audio;
+      if (!openRef.current) break;
+      if (blob) {
         const url = URL.createObjectURL(blob);
         await new Promise<void>((resolve) => {
           const audio = new Audio(url);
           audioRef.current = audio;
-          audio.onended = () => { URL.revokeObjectURL(url); resolve(); };
-          audio.onerror = () => { URL.revokeObjectURL(url); resolve(); };
+          cancelPlayRef.current = () => { audio.pause(); URL.revokeObjectURL(url); resolve(); };
+          audio.onended = () => { cancelPlayRef.current = null; URL.revokeObjectURL(url); resolve(); };
+          audio.onerror = () => { cancelPlayRef.current = null; URL.revokeObjectURL(url); resolve(); };
           void audio.play().catch(() => resolve());
         });
-      } catch {
-        await speakWithBrowser(sentence);
+      } else {
+        await speakWithBrowser(item.text);
       }
     }
+    pumpingRef.current = false;
+    if (openRef.current && streamDoneRef.current && queueRef.current.length === 0) {
+      const done = turnDoneRef.current;
+      turnDoneRef.current = null;
+      done?.();
+    }
   }, [speakWithBrowser]);
+
+  const enqueueSentence = useCallback((raw: string) => {
+    const text = plainForSpeech(raw);
+    if (text.length < 2) return;
+    queueRef.current.push({ text, audio: fetchSpeakAudio(text) });
+    setPhase('speaking');
+    void pumpQueue();
+  }, [fetchSpeakAudio, pumpQueue]);
 
   const askCalili = useCallback(async (userText: string): Promise<string> => {
     const store = useChatStore.getState();
@@ -106,7 +134,7 @@ export default function VoiceMode({ onClose, onFile }: VoiceModeProps) {
     const res = await fetch('/api/chat', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ messages: history, model: useSettingsStore.getState().selectedModel }),
+      body: JSON.stringify({ messages: history, model: useSettingsStore.getState().selectedModel, voice: true }),
     });
     if (!res.ok || !res.body) throw new Error('chat');
 
@@ -114,6 +142,22 @@ export default function VoiceMode({ onClose, onFile }: VoiceModeProps) {
     const decoder = new TextDecoder();
     let buffer = '';
     let full = '';
+    let pendingSentence = '';
+    const sentenceBoundary = /[.!?…]+["»)]?\s+/;
+
+    const feedContent = (content: string) => {
+      full += content;
+      pendingSentence += content;
+      let match = sentenceBoundary.exec(pendingSentence);
+      while (match) {
+        const end = match.index + match[0].length;
+        const sentence = pendingSentence.slice(0, end).trim();
+        pendingSentence = pendingSentence.slice(end);
+        if (sentence) enqueueSentence(sentence);
+        match = sentenceBoundary.exec(pendingSentence);
+      }
+    };
+
     for (;;) {
       const { done, value } = await reader.read();
       if (done) break;
@@ -128,7 +172,7 @@ export default function VoiceMode({ onClose, onFile }: VoiceModeProps) {
         try {
           const parsed = JSON.parse(data);
           if (parsed.file) onFile(parsed.file as GeneratedFile);
-          if (parsed.content) full += parsed.content;
+          if (parsed.content) feedContent(String(parsed.content));
           if (parsed.error) throw new Error(parsed.error);
         } catch (err) {
           if (err instanceof SyntaxError) continue;
@@ -136,14 +180,15 @@ export default function VoiceMode({ onClose, onFile }: VoiceModeProps) {
         }
       }
     }
+    if (pendingSentence.trim()) enqueueSentence(pendingSentence.trim());
     const reply = normalizeCaliliResponse(full.trim());
     if (!reply) throw new Error('respuesta vacia');
     useChatStore.getState().addMessage(conversationId, { role: 'assistant', content: reply });
     return reply;
-  }, [onFile]);
+  }, [enqueueSentence, onFile]);
 
   const listenOnce = useCallback(async () => {
-    if (!openRef.current) return;
+    if (!openRef.current || mutedRef.current) return;
     setPhase('listening');
     setCaption('Te escucho…');
     try {
@@ -174,7 +219,7 @@ export default function VoiceMode({ onClose, onFile }: VoiceModeProps) {
         const now = Date.now();
         if (rms > 0.025) { heardSpeech = true; silenceSince = 0; }
         else if (heardSpeech) { if (!silenceSince) silenceSince = now; }
-        const silenceLong = heardSpeech && silenceSince > 0 && now - silenceSince > 1400;
+        const silenceLong = heardSpeech && silenceSince > 0 && now - silenceSince > 1000;
         const tooLong = now - startedAt > 30000;
         if (silenceLong || tooLong) {
           if (recorder.state !== 'inactive') recorder.stop();
@@ -192,7 +237,7 @@ export default function VoiceMode({ onClose, onFile }: VoiceModeProps) {
       stream.getTracks().forEach((t) => t.stop());
       streamRef.current = null;
       setLevel(0);
-      if (!openRef.current) return;
+      if (!openRef.current || mutedRef.current) return;
 
       if (!heardSpeech || chunks.length === 0) { void listenOnce(); return; }
 
@@ -204,21 +249,30 @@ export default function VoiceMode({ onClose, onFile }: VoiceModeProps) {
       const tdata = await tres.json().catch(() => ({}));
       const userText = String(tdata?.text || '').trim();
       if (!userText) { void listenOnce(); return; }
+      if (mutedRef.current) return;
       setCaption(`Tú: ${userText}`);
 
+      streamDoneRef.current = false;
+      const turnDone = new Promise<void>((resolve) => { turnDoneRef.current = resolve; });
       const reply = await askCalili(userText);
-      if (!openRef.current) return;
-      setPhase('speaking');
+      if (!openRef.current || mutedRef.current) return;
       setCaption(reply.length > 220 ? `${reply.slice(0, 220)}…` : reply);
-      await speak(reply);
+      streamDoneRef.current = true;
+      if (queueRef.current.length === 0 && !pumpingRef.current) {
+        turnDoneRef.current = null;
+        void listenOnce();
+        return;
+      }
+      void pumpQueue();
+      await turnDone;
       if (!openRef.current) return;
       void listenOnce();
-    } catch (err) {
+    } catch {
       if (!openRef.current) return;
       setPhase('error');
       setCaption('No pude usar el micrófono o falló la conexión. Toca la orbe para reintentar.');
     }
-  }, [askCalili, speak]);
+  }, [askCalili, pumpQueue]);
 
   useEffect(() => {
     openRef.current = true;
@@ -228,12 +282,39 @@ export default function VoiceMode({ onClose, onFile }: VoiceModeProps) {
   }, []);
 
   const handleClose = () => { openRef.current = false; stopTracks(); onClose(); };
+
+  const toggleMute = () => {
+    if (!mutedRef.current) {
+      mutedRef.current = true;
+      setMuted(true);
+      if (recorderRef.current && recorderRef.current.state !== 'inactive') {
+        try { recorderRef.current.stop(); } catch { /* ya detenido */ }
+      }
+      streamRef.current?.getTracks().forEach((t) => t.stop());
+      streamRef.current = null;
+      cancelPlayRef.current?.();
+      cancelPlayRef.current = null;
+      if (typeof window !== 'undefined' && 'speechSynthesis' in window) window.speechSynthesis.cancel();
+      queueRef.current = [];
+      streamDoneRef.current = true;
+      const done = turnDoneRef.current;
+      turnDoneRef.current = null;
+      done?.();
+      setLevel(0);
+      setCaption('Micrófono en pausa. Toca el micrófono para seguir hablando.');
+    } else {
+      mutedRef.current = false;
+      setMuted(false);
+      void listenOnce();
+    }
+  };
   const handleOrbTap = () => { if (phase === 'error') void listenOnce(); };
 
-  const orbScale = phase === 'listening' ? 1 + level * 0.25 : phase === 'speaking' ? 1.06 : 1;
+  const orbScale = phase === 'listening' ? 1 + level * 0.22 : phase === 'speaking' ? 1.05 : 1;
+  const spinSeconds = phase === 'speaking' ? 10 : phase === 'thinking' ? 6 : 26;
 
   return (
-    <div className="fixed inset-0 z-50 flex flex-col items-center justify-center bg-[#0b0b12]/97 backdrop-blur-sm">
+    <div className="fixed inset-0 z-50 flex flex-col items-center justify-center bg-[#070b14]/97 backdrop-blur-sm">
       <button
         onClick={handleClose}
         className="absolute right-5 top-5 rounded-full border border-white/15 bg-white/5 p-2.5 text-white/70 hover:bg-white/10 hover:text-white"
@@ -244,31 +325,56 @@ export default function VoiceMode({ onClose, onFile }: VoiceModeProps) {
       </button>
 
       <button onClick={handleOrbTap} className="relative grid place-items-center rounded-full" aria-label="Orbe de voz de Calili">
-        <span className={`absolute h-64 w-64 rounded-full bg-fuchsia-500/20 blur-2xl ${phase === 'listening' ? 'animate-ping' : ''}`} style={{ animationDuration: '2.4s' }} />
+        <span className={`absolute h-64 w-64 rounded-full bg-sky-500/15 blur-3xl ${phase === 'listening' ? 'animate-ping' : ''}`} style={{ animationDuration: '2.4s' }} />
         <span
-          className="relative block h-52 w-52 rounded-full shadow-[0_0_80px_rgba(217,70,180,0.45)] transition-transform duration-150"
+          className="relative block h-52 w-52 overflow-hidden rounded-full shadow-[0_0_90px_rgba(56,150,255,0.45)] transition-transform duration-150"
           style={{
             transform: `scale(${orbScale})`,
-            background: 'conic-gradient(from 120deg, #f59e0b, #ec4899, #8b5cf6, #06b6d4, #f59e0b)',
-            animation: phase === 'thinking' ? 'calili-spin 3.2s linear infinite' : 'calili-breathe 4.5s ease-in-out infinite',
+            background: 'radial-gradient(circle at 50% 42%, #dbeafe 0%, #93c5fd 34%, #3b82f6 68%, #1e3a8a 100%)',
+            filter: phase === 'speaking' ? 'brightness(1.15)' : 'brightness(1)',
           }}
         >
-          <span className="absolute inset-0 rounded-full bg-[radial-gradient(circle_at_32%_28%,rgba(255,255,255,0.55),rgba(255,255,255,0)_55%)]" />
+          <span
+            className="absolute inset-[-25%] block"
+            style={{ animation: `calili-orb-spin ${spinSeconds}s linear infinite` }}
+          >
+            <span className="absolute left-[6%] top-[10%] h-32 w-32 rounded-full bg-sky-300/80 blur-2xl" style={{ animation: 'calili-drift-a 7s ease-in-out infinite alternate' }} />
+            <span className="absolute right-[4%] top-[30%] h-36 w-36 rounded-full bg-cyan-200/70 blur-2xl" style={{ animation: 'calili-drift-b 9s ease-in-out infinite alternate' }} />
+            <span className="absolute bottom-[2%] left-[26%] h-32 w-32 rounded-full bg-indigo-400/70 blur-2xl" style={{ animation: 'calili-drift-c 8s ease-in-out infinite alternate' }} />
+            <span className="absolute left-[38%] top-[2%] h-24 w-24 rounded-full bg-white/80 blur-2xl" style={{ animation: 'calili-drift-b 6s ease-in-out infinite alternate-reverse' }} />
+          </span>
+          <span className="absolute inset-0 rounded-full bg-[radial-gradient(circle_at_32%_24%,rgba(255,255,255,0.65),rgba(255,255,255,0)_52%)]" />
+          <span className="absolute inset-0 rounded-full shadow-[inset_0_-22px_38px_rgba(15,23,42,0.45),inset_0_14px_28px_rgba(255,255,255,0.25)]" />
         </span>
       </button>
 
       <p className="mt-10 flex items-center gap-2 text-sm uppercase tracking-[0.25em] text-white/50">
-        {phase === 'listening' && 'Escuchando'}
+        {muted && 'En pausa'}
+        {!muted && phase === 'listening' && 'Escuchando'}
         {phase === 'thinking' && 'Pensando'}
         {phase === 'speaking' && 'Calili está hablando'}
         {phase === 'error' && <><MicOff className="h-4 w-4" /> Algo falló</>}
       </p>
       <p className="mt-3 max-w-xl px-6 text-center text-lg leading-relaxed text-white/90">{caption}</p>
-      <p className="mt-8 px-6 text-center text-xs text-white/35">Toca la X para salir. La conversación también queda escrita en tu chat.</p>
+      <button
+        onClick={toggleMute}
+        className={`mt-9 grid h-14 w-14 place-items-center rounded-full border transition ${
+          muted
+            ? 'border-red-300/40 bg-red-500/80 text-white hover:bg-red-500'
+            : 'border-white/15 bg-white/10 text-white hover:bg-white/20'
+        }`}
+        title={muted ? 'Activar el micrófono' : 'Pausar el micrófono'}
+        aria-label={muted ? 'Activar el micrófono' : 'Pausar el micrófono'}
+      >
+        {muted ? <MicOff className="h-6 w-6" /> : <Mic className="h-6 w-6" />}
+      </button>
+      <p className="mt-6 px-6 text-center text-xs text-white/35">Micrófono: un toque para pausar, otro para seguir. La X cierra el modo voz. La conversación también queda escrita en tu chat.</p>
 
       <style jsx global>{`
-        @keyframes calili-breathe { 0%, 100% { filter: brightness(1); } 50% { filter: brightness(1.18); } }
-        @keyframes calili-spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+        @keyframes calili-orb-spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+        @keyframes calili-drift-a { from { transform: translate(0, 0) scale(1); } to { transform: translate(26px, 18px) scale(1.25); } }
+        @keyframes calili-drift-b { from { transform: translate(0, 0) scale(1.15); } to { transform: translate(-24px, 14px) scale(0.9); } }
+        @keyframes calili-drift-c { from { transform: translate(0, 0) scale(0.95); } to { transform: translate(18px, -20px) scale(1.2); } }
       `}</style>
     </div>
   );

@@ -131,7 +131,7 @@ const nextConfig = {
   reactStrictMode: true,
   swcMinify: true,
   experimental: {
-    serverComponentsExternalPackages: ['pdfkit'],
+    serverComponentsExternalPackages: ['pdfkit', 'msedge-tts', 'ws', 'bufferutil', 'utf-8-validate'],
   },
   images: {
     domains: ['avatars.githubusercontent.com', 'lh3.googleusercontent.com']

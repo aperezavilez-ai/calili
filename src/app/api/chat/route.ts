@@ -58,13 +58,16 @@ export async function POST(req: NextRequest) {
         ).slice(0, MAX_IMAGES)
       : [];
 
+    const voiceMode = (body as { voice?: unknown })?.voice === true;
     const caps = toolCapabilities();
     const systemPrompt = buildSystemPrompt({
       createFiles: caps.createFiles,
       webSearch: caps.webSearch,
       readRepos: caps.readRepos,
       vision: true,
-    });
+    }) + (voiceMode
+      ? '\n\nMODO VOZ (el usuario te escucha, no te lee): responde conversacional y breve, de 1 a 3 frases cortas. Nada de listas, tablas, encabezados ni markdown.'
+      : '');
 
     const conversation = (messages as NexusMessage[]).filter((m) => m.role !== 'system');
     const history = compactHistory(conversation);
@@ -108,7 +111,8 @@ export async function POST(req: NextRequest) {
           // --- Camino con herramientas (solo Groq) ------------------------
           const definitions = toolDefinitions(caps);
           let handled = false;
-          if (definitions.length > 0 && process.env.GROQ_API_KEY) {
+          // En modo voz se salta la pasada de herramientas: la latencia manda.
+          if (!voiceMode && definitions.length > 0 && process.env.GROQ_API_KEY) {
             try {
               const completion = await completeWithTools(
                 fullMessages as unknown[],

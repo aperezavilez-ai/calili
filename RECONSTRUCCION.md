@@ -92,3 +92,15 @@ Motivo (juicio de Luis, 2026-11-23): las respuestas salían de miles de palabras
 - Bucle conversacional manos libres: escucha (Whisper, corte automático tras 1,4 s de silencio) → responde NEXUS → habla → vuelve a escuchar. La conversación también queda escrita en el chat y se guarda igual.
 - Voz de Calili: ruta /api/speak con la voz neural femenina es-MX Dalia (servicio de voz de Microsoft vía msedge-tts, sin clave ni costo). Si ese servicio fallara, la app cae automáticamente a la voz del navegador. Variable opcional CALILI_VOICE para cambiar la voz.
 - La función normalizeCaliliResponse se movió a src/lib/response-policy.ts (compartida por chat y modo voz).
+
+## v2.3.1 — Móvil: panel lateral e instalación
+- CORREGIDO el panel que se abría y se cerraba solo en el celular: un efecto en ChatInterface dependía de isSidebarOpen y lo cerraba a los 500 ms de abrirlo en pantallas <768px. Ahora el panel solo arranca cerrado al cargar en móvil.
+- Panel estilo ChatGPT: fondo oscuro táctil para cerrarlo, animación de deslizamiento, deslizar desde el borde izquierdo de la pantalla para abrirlo y deslizar hacia la izquierda sobre el panel para cerrarlo.
+- Instalar en iPhone: el botón de descarga del panel ahora también aparece en iOS (antes dependía de beforeinstallprompt, que Apple no soporta) y muestra las instrucciones Compartir → Agregar a pantalla de inicio.
+
+## v2.4.0 — Voz realista, orbe fluida, latencia y un solo micrófono
+- Diagnóstico en vivo de Lu: /api/speak devolvía 502 «t.mask is not a function» (msedge-tts empaquetado por Next/Vercel) y la app caía a la voz del navegador (en la PC de Luis, masculina). Corrección: msedge-tts/ws quedan como paquetes externos del servidor (serverComponentsExternalPackages) para que corran sin empaquetar.
+- /api/speak con doble motor y cabecera X-Voice-Engine: 1) Edge Dalia es-MX; 2) si falla, TTS de Google (femenina, verificado por Lu con MP3 real); 3) si todo falla, el cliente usa la voz del navegador filtrando SOLO voces femeninas (fuera Pablo/Jorge y demás masculinas).
+- Latencia: el modo voz ya no pasa por la pasada de herramientas (streaming directo) y pide respuestas de 1-3 frases; Calili empieza a hablar con la primera frase mientras el resto aún se genera (frases en tubería con precarga de audio); el corte por silencio bajó a 1,0 s.
+- Orbe nueva estilo ChatGPT: esfera azul fluida con masas de luz que derivan dentro, brillo especular y sombra interior (fuera el degradado cónico de rueda de color).
+- Un solo icono de voz (como ChatGPT): fuera el botón de ondas y fuera el dictado suelto del InputBox; el micrófono abre el Modo Voz. Dentro del Modo Voz hay botón de micrófono que pausa (corta escucha y voz al instante) y reanuda con otro toque; la X cierra.
