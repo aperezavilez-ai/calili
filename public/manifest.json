@@ -1,7 +1,7 @@
 {
-  "name": "Calili - Tu Asistente AI",
+  "name": "Calili",
   "short_name": "Calili",
-  "description": "Asistente AI personal con interfaz ChatGPT. Disponible en web, iOS y Android.",
+  "description": "Calili — inteligencia artificial para conversar, crear, analizar y resolver. En web, iOS y Android.",
   "start_url": "/",
   "id": "/",
   "scope": "/",

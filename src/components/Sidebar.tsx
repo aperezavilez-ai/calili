@@ -342,8 +342,7 @@ export function Sidebar({ userEmail, onSignOut }: { userEmail?: string; onSignOu
           </div>
         )}
         <div className="text-xs text-white/40 text-center">
-          <p className="font-semibold mb-1">Calili AI</p>
-          <p>Tu asistente personal</p>
+          <p className="font-semibold">Calili</p>
         </div>
       </div>
     </aside>

@@ -5,8 +5,8 @@ import './globals.css';
 const inter = Inter({ subsets: ['latin'] });
 
 export const metadata: Metadata = {
-  title: 'Calili - Tu Asistente AI',
-  description: 'Asistente AI personal con chat, generación de imágenes y razonamiento profundo',
+  title: 'Calili',
+  description: 'Calili — inteligencia artificial para conversar, crear, analizar y resolver.',
   manifest: '/manifest.json',
   appleWebApp: {
     capable: true,

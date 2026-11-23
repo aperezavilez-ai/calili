@@ -133,3 +133,8 @@ Motivo (juicio de Luis, 2026-11-23): las respuestas salían de miles de palabras
 - La pantalla de voz ya no muestra ningún texto de la plática: solo la orbe y la palabra de estado. La transcripción y las respuestas se siguen guardando por escrito en el chat, por detrás, sin interferir.
 - Sonido de CONEXIÓN al activar el modo voz (arpegio cálido ascendente, earcon 'connect'), como el de ChatGPT al entrar.
 - Corte de silencio de 1.0 s a 0.8 s: la respuesta arranca antes tras cada frase.
+
+## v2.9.0 — Identidad sin slogan (orden de Luis)
+- Fuera «tu asistente virtual / personal» de toda la superficie: título de la app y manifest («Calili», a secas, como ChatGPT/Gemini), subtítulo de AuthScreen («Inicia sesión para continuar»), pie del Sidebar («Calili»), README y descripción del paquete.
+- La identidad en el prompt del sistema ya no es «el asistente personal de Luis» sino una IA conversacional general (la personalización real viene de la memoria por usuario, no de un slogan).
+- response-policy ya no reescribe presentaciones como «Soy Calili, tu asistente virtual» sino «Soy Calili.».

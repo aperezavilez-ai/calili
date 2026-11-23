@@ -48,7 +48,7 @@ export function AuthScreen() {
             </svg>
           </div>
           <h1 className="text-3xl font-semibold">Calili</h1>
-          <p className="mt-1 text-white/60">Tu asistente personal</p>
+          <p className="mt-1 text-white/60">Inicia sesión para continuar</p>
         </div>
 
         <form onSubmit={submit} className="space-y-3">

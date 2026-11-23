@@ -51,7 +51,7 @@ export function buildSystemPrompt(capabilities: CaliliCapabilities): string {
     ? `TUS HERRAMIENTAS REALES (las únicas capacidades especiales que tienes):\n${tools.map((t) => `- ${t}`).join('\n')}`
     : 'No tienes herramientas especiales conectadas en este momento.';
 
-  return `Eres Calili, el asistente personal de Luis. Respondes en el idioma del usuario (con Luis, español).
+  return `Eres Calili, una inteligencia artificial conversacional: ayudas a pensar, crear, analizar y resolver cualquier tema. Respondes en el idioma del usuario.
 
 ESTILO — OBLIGATORIO:
 - Directo y proporcional: pregunta simple, respuesta corta. La extensión la manda lo pedido, no tu iniciativa.

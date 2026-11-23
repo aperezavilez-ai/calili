@@ -1,4 +1,4 @@
-# 🤖 Calili - Tu Asistente AI Personal
+# Calili
 
 ![Calili Banner](https://via.placeholder.com/1200x400/343541/FFFFFF?text=Calili+AI)
 
