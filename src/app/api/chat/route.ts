@@ -3,6 +3,7 @@ import {
   streamNexusChat,
   streamVisionChat,
   completeWithTools,
+  summarizeHistory,
   NexusConfigError,
   type NexusMessage,
 } from '@/lib/nexus-gateway';
@@ -12,6 +13,7 @@ import type { GeneratedFile } from '@/lib/file-generator';
 
 // nodejs: en desarrollo debe poder alcanzar el NEXUS local (127.0.0.1).
 export const runtime = 'nodejs';
+export const maxDuration = 300;
 
 const MAX_HISTORY_MESSAGES = 40;
 const MAX_MESSAGE_CHARS = 12000;
@@ -68,6 +70,7 @@ export async function POST(req: NextRequest) {
       imageGen: caps.imageGen,
       imageEdit: caps.imageEdit,
       memory: caps.memory,
+      googleMedia: caps.googleMedia,
     }) + (voiceMode
       ? '\n\nMODO VOZ (el usuario te escucha, no te lee): responde conversacional y breve, de 1 a 3 frases cortas. Nada de listas, tablas, encabezados ni markdown.'
       : '');
@@ -84,7 +87,7 @@ export async function POST(req: NextRequest) {
 
     const conversation = (messages as NexusMessage[]).filter((m) => m.role !== 'system');
     const history = compactHistory(conversation);
-    const fullMessages: NexusMessage[] = [{ role: 'system', content: systemPrompt + memoryBlock }, ...history];
+    let fullMessages: NexusMessage[] = [{ role: 'system', content: systemPrompt + memoryBlock }, ...history];
 
     const encoder = new TextEncoder();
     const send = (
@@ -96,6 +99,47 @@ export async function POST(req: NextRequest) {
       async start(controller) {
         try {
           send(controller, { status: 'preparing' });
+
+          // Resumen rodante: si la conversacion ya no cabe completa, la
+          // parte antigua viaja como resumen (el historial visible del
+          // usuario nunca se toca). El cliente cachea el resumen por
+          // conversacion y lo devuelve en cada mensaje (summary/summaryUpTo).
+          const droppedCount = conversation.length - history.length;
+          if (droppedCount > 0) {
+            const clientSummary = typeof (body as { summary?: unknown })?.summary === 'string'
+              ? ((body as { summary: string }).summary as string)
+              : '';
+            const clientUpTo = Number((body as { summaryUpTo?: unknown })?.summaryUpTo) || 0;
+            let summaryText = '';
+            if (clientSummary && clientUpTo === droppedCount) {
+              summaryText = clientSummary;
+            } else if (process.env.GROQ_API_KEY) {
+              try {
+                const sliceToSummarize = conversation.slice(Math.min(clientUpTo, droppedCount), droppedCount);
+                const transcript = sliceToSummarize
+                  .map((m) => `${m.role === 'user' ? 'USUARIO' : 'CALILI'}: ${m.content}`)
+                  .join('\n')
+                  .slice(0, 24000);
+                if (transcript) {
+                  summaryText = await summarizeHistory(clientSummary, transcript);
+                  send(controller, { summary: { text: summaryText, upTo: droppedCount } });
+                }
+              } catch (summaryError) {
+                console.error('Calili: resumen de historial falló, se sigue sin resumen', summaryError);
+                summaryText = clientSummary;
+              }
+            }
+            if (summaryText) {
+              fullMessages = [
+                fullMessages[0],
+                {
+                  role: 'system',
+                  content: `RESUMEN DE LA PARTE ANTERIOR DE ESTA MISMA CONVERSACIÓN (los mensajes resumidos ya no van adjuntos; el usuario sí los sigue viendo en su pantalla):\n${summaryText}`,
+                },
+                ...history,
+              ];
+            }
+          }
 
           // --- Camino de visión: hay imágenes adjuntas -------------------
           if (imageList.length > 0) {

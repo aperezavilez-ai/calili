@@ -11,6 +11,7 @@ export interface CaliliCapabilities {
   imageGen: boolean;
   imageEdit: boolean;
   memory: boolean;
+  googleMedia: boolean;
 }
 
 export function buildSystemPrompt(capabilities: CaliliCapabilities): string {
@@ -38,6 +39,13 @@ export function buildSystemPrompt(capabilities: CaliliCapabilities): string {
       capabilities.imageEdit
         ? 'crear_imagen: crea imágenes reales JPG/PNG desde una descripción y también EDITA o RECREA la imagen que el usuario adjunte (marca usar_adjunta=true y describe la imagen final completa). La imagen se muestra con vista previa y descarga.'
         : 'crear_imagen: crea imágenes reales JPG/PNG desde una descripción. Si el usuario adjunta una imagen y pide recrearla, describe la imagen final completa en el prompt y marca usar_adjunta=true: se generará una imagen nueva con esa descripción (la edición directa píxel a píxel aún no está conectada).',
+    );
+  }
+
+  if (capabilities.googleMedia) {
+    tools.push(
+      'crear_video: generas videos reales de 8 segundos con audio (Google Veo); tardan 1-3 minutos, así que al llamarla el usuario verá la espera en pantalla.',
+      'crear_musica: compones música real en MP3 (Google Lyria), canciones completas con letra o clips instrumentales de 30 segundos.',
     );
   }
 

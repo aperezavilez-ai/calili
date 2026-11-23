@@ -234,6 +234,47 @@ export async function completeWithTools(
   };
 }
 
+// Resumen rodante de la parte antigua de una conversación larga: el
+// historial visible del usuario nunca se toca; esto es solo lo que el
+// modelo recibe a cambio de los mensajes que ya no caben en contexto.
+export async function summarizeHistory(previousSummary: string, transcript: string): Promise<string> {
+  const provider = groqProvider();
+  const response = await fetch(`${provider.baseUrl}/chat/completions`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${provider.apiKey}`,
+    },
+    body: JSON.stringify({
+      model: provider.model,
+      messages: [
+        {
+          role: 'system',
+          content:
+            'Resume en español, en máximo 220 palabras y en tercera persona, la parte de una conversación que se le entrega. Conserva hechos, nombres, cifras, decisiones, acuerdos y temas pendientes; descarta saludos y relleno. Si ya hay un resumen anterior, fúndelo con lo nuevo en un solo resumen coherente.',
+        },
+        {
+          role: 'user',
+          content: (previousSummary ? `RESUMEN ANTERIOR:\n${previousSummary}\n\n` : '') + `MENSAJES A RESUMIR:\n${transcript}`,
+        },
+      ],
+      stream: false,
+      max_completion_tokens: 700,
+    }),
+    signal: AbortSignal.timeout(45000),
+  });
+
+  if (!response.ok) {
+    const detail = await response.text().catch(() => '');
+    throw new Error(`No se pudo resumir el historial (${response.status}). ${detail.slice(0, 200)}`);
+  }
+  const data = await response.json();
+  const content = data.choices?.[0]?.message?.content;
+  if (typeof content !== 'string' || !content.trim()) throw new Error('Resumen vacío.');
+  return content.trim();
+}
+
+
 // Streaming desde el modelo de visión (Llama 4 Scout en Groq). Los mensajes
 // llevan partes de texto e imagen (image_url con data: en base64).
 export async function* streamVisionChat(

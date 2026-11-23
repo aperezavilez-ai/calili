@@ -21,6 +21,9 @@ export interface Conversation {
   messages: Message[];
   createdAt: number;
   updatedAt: number;
+  // Resumen rodante de los mensajes antiguos (cache local del cliente).
+  summary?: string;
+  summaryUpTo?: number;
 }
 
 interface ChatStore {
@@ -40,6 +43,7 @@ interface ChatStore {
   addMessage: (conversationId: string, message: Omit<Message, 'id' | 'timestamp'>) => void;
   removeMessage: (conversationId: string, messageId: string) => void;
   truncateConversation: (conversationId: string, messageId: string) => void;
+  setConversationSummary: (conversationId: string, summary: string, summaryUpTo: number) => void;
   updateConversationTitle: (id: string, title: string) => void;
   setLoading: (loading: boolean) => void;
   toggleDarkMode: () => void;
@@ -173,6 +177,16 @@ export const useChatStore = create<ChatStore>()(
           ),
         }));
         if (get().dbUserId) removed.forEach((m) => sync(deleteMessageDb(m.id)));
+      },
+
+      // Resumen rodante de la parte antigua (cache local; el servidor lo
+      // genera y lo emite por SSE cuando la conversacion crece).
+      setConversationSummary: (conversationId, summary, summaryUpTo) => {
+        set((state) => ({
+          conversations: state.conversations.map((conv) =>
+            conv.id === conversationId ? { ...conv, summary, summaryUpTo } : conv
+          ),
+        }));
       },
 
       updateConversationTitle: (id, title) => {

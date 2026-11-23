@@ -1,4 +1,5 @@
 import type { GeneratedFile } from '@/lib/file-generator';
+import { googleAiKey } from '@/lib/google-media';
 
 // Creación y edición de imágenes reales.
 // - Con OPENAI_API_KEY: gpt-image-1 (genera y EDITA la imagen adjunta).
@@ -13,7 +14,7 @@ export interface CreateImageArgs {
 
 export interface CreateImageResult {
   file: GeneratedFile;
-  engine: 'openai' | 'openai-edit' | 'pollinations';
+  engine: 'google' | 'google-edit' | 'openai' | 'openai-edit' | 'pollinations';
   note?: string;
 }
 
@@ -79,6 +80,12 @@ export async function createImage(
   if (!prompt) throw new Error('Falta la descripción de la imagen.');
   const wantsEdit = Boolean(args?.usar_adjunta && attachedImage);
 
+  if (googleAiKey()) {
+    const { googleImage } = await import('@/lib/google-media');
+    const { file, note } = await googleImage(prompt, wantsEdit ? attachedImage : undefined);
+    return { file, engine: wantsEdit ? 'google-edit' : 'google', note };
+  }
+
   if (process.env.OPENAI_API_KEY) {
     if (wantsEdit && attachedImage) {
       const file = await openaiEdit(prompt, attachedImage);
@@ -93,7 +100,7 @@ export async function createImage(
     file,
     engine: 'pollinations',
     note: wantsEdit
-      ? 'Se generó una imagen NUEVA a partir de la descripción (la edición directa de la adjunta requiere la clave de OpenAI).'
+      ? 'Se generó una imagen NUEVA a partir de la descripción (la edición directa de la adjunta requiere la clave de Google u OpenAI).'
       : undefined,
   };
 }

@@ -1,5 +1,6 @@
 import { generateFile, type CreateFileArgs, type GeneratedFile } from '@/lib/file-generator';
 import { createImage } from '@/lib/image-generator';
+import { googleAiKey } from '@/lib/google-media';
 
 // Herramientas que el modelo puede invocar (function calling, formato
 // OpenAI). Se anuncian solo si el servidor tiene lo necesario para
@@ -13,6 +14,7 @@ export interface ToolCapabilities {
   imageGen: boolean;
   imageEdit: boolean;
   memory: boolean;
+  googleMedia: boolean;
 }
 
 export function toolCapabilities(): ToolCapabilities {
@@ -21,8 +23,9 @@ export function toolCapabilities(): ToolCapabilities {
     webSearch: Boolean(process.env.TAVILY_API_KEY),
     readRepos: true,
     imageGen: true,
-    imageEdit: Boolean(process.env.OPENAI_API_KEY),
+    imageEdit: Boolean(process.env.OPENAI_API_KEY) || Boolean(googleAiKey()),
     memory: true,
+    googleMedia: Boolean(googleAiKey()),
   };
 }
 
@@ -73,6 +76,41 @@ export function toolDefinitions(caps: ToolCapabilities) {
             usar_adjunta: { type: 'boolean', description: 'true si debe basarse en la imagen que el usuario adjuntó en este mensaje.' },
           },
           required: ['prompt'],
+        },
+      },
+    });
+  }
+
+  if (caps.googleMedia) {
+    tools.push({
+      type: 'function',
+      function: {
+        name: 'crear_video',
+        description:
+          'Crea un VIDEO real de 8 segundos con audio (Google Veo) y se lo muestra al usuario con reproductor y descarga. Tarda entre 1 y 3 minutos en generarse. Úsala cuando pida un video, un clip, una animación o mover una imagen. Escribe la descripción en INGLÉS, muy detallada: escena, movimiento de cámara, acción, ambiente y sonido. Si adjuntó una imagen y quiere animarla, marca usar_adjunta=true.',
+        parameters: {
+          type: 'object',
+          properties: {
+            descripcion: { type: 'string', description: 'Descripción detallada del video, en inglés.' },
+            usar_adjunta: { type: 'boolean', description: 'true si el video debe partir de la imagen adjunta.' },
+          },
+          required: ['descripcion'],
+        },
+      },
+    });
+    tools.push({
+      type: 'function',
+      function: {
+        name: 'crear_musica',
+        description:
+          'Crea MÚSICA real en MP3 (Google Lyria) y se la muestra al usuario con reproductor y descarga. tipo="cancion" = canción completa de hasta ~3 minutos (con letra si la descripción la pide); tipo="clip" = clip instrumental de 30 segundos. Describe género, instrumentos, ritmo, ambiente y, si quiere letra, el tema de la letra y el idioma.',
+        parameters: {
+          type: 'object',
+          properties: {
+            descripcion: { type: 'string', description: 'Descripción de la música: género, instrumentos, ambiente y tema de la letra si aplica.' },
+            tipo: { type: 'string', enum: ['cancion', 'clip'], description: 'cancion (completa) o clip (30 s instrumental).' },
+          },
+          required: ['descripcion'],
         },
       },
     });
@@ -242,6 +280,26 @@ export async function executeTool(name: string, rawArgs: string, context?: { ima
         );
         return {
           resultForModel: `Imagen creada: ${result.file.name} (motor: ${result.engine}). Ya se le mostró al usuario con vista previa y botón de descarga. ${result.note ?? ''} Confírmalo en una frase breve.`,
+          file: result.file,
+        };
+      }
+      case 'crear_video': {
+        const { googleVideo } = await import('@/lib/google-media');
+        const result = await googleVideo(
+          String(args.descripcion ?? ''),
+          args.usar_adjunta ? context?.images?.[0] : undefined,
+        );
+        return {
+          resultForModel: 'Video creado (8 segundos, con audio): ya se le mostró al usuario con reproductor y botón de descarga. Confírmalo en una frase breve y menciona que tardó lo que tarda Veo en generarlo.',
+          file: result.file,
+        };
+      }
+      case 'crear_musica': {
+        const { googleMusic } = await import('@/lib/google-media');
+        const kind = args.tipo === 'clip' ? 'clip' : 'cancion';
+        const result = await googleMusic(String(args.descripcion ?? ''), kind);
+        return {
+          resultForModel: `Música creada (${kind === 'clip' ? 'clip de 30 segundos' : 'canción completa'}): ya se le mostró al usuario con reproductor y botón de descarga.${result.lyrics ? ` La letra/estructura que devolvió el motor es: ${result.lyrics}` : ''} Confírmalo en una frase breve.`,
           file: result.file,
         };
       }

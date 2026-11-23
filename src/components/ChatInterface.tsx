@@ -31,6 +31,7 @@ export default function ChatInterface() {
     clearAllConversations,
     removeMessage,
     truncateConversation,
+    setConversationSummary,
   } = useChatStore();
 
   const [authStatus, setAuthStatus] = useState<'checking' | 'local' | 'signedOut' | 'signedIn'>('checking');
@@ -173,6 +174,7 @@ export default function ChatInterface() {
   const streamReply = async (
     msgs: Array<{ role: string; content: string }>,
     imageDataUrls: string[],
+    convId?: string,
   ): Promise<string> => {
     const chatController = new AbortController();
     activeRequestControllerRef.current = chatController;
@@ -181,7 +183,13 @@ export default function ChatInterface() {
       const response = await fetch('/api/chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ messages: msgs, images: imageDataUrls, memory: memoryFacts }),
+        body: JSON.stringify({
+          messages: msgs,
+          images: imageDataUrls,
+          memory: memoryFacts,
+          summary: convId ? useChatStore.getState().conversations.find((c) => c.id === convId)?.summary ?? '' : '',
+          summaryUpTo: convId ? useChatStore.getState().conversations.find((c) => c.id === convId)?.summaryUpTo ?? 0 : 0,
+        }),
         signal: chatController.signal,
       });
 
@@ -217,6 +225,9 @@ export default function ChatInterface() {
                   ...prev,
                   { id: `${Date.now()}-${prev.length}`, name: parsed.file.name, mime: parsed.file.mime, base64: parsed.file.base64 },
                 ]);
+              }
+              if (parsed.summary && convId) {
+                setConversationSummary(convId, String(parsed.summary.text || ''), Number(parsed.summary.upTo) || 0);
               }
               if (parsed.memory) {
                 const userId = useChatStore.getState().dbUserId;
@@ -301,7 +312,7 @@ export default function ChatInterface() {
         if (lastUserIdx >= 0) msgs[lastUserIdx] = { role: 'user', content: modelContent };
         else msgs.push({ role: 'user', content: modelContent });
 
-        const accumulatedContent = await streamReply(msgs, imageDataUrls);
+        const accumulatedContent = await streamReply(msgs, imageDataUrls, convId);
 
         if (accumulatedContent) {
           const finalContent = normalizeCaliliResponse(accumulatedContent);
@@ -350,7 +361,7 @@ export default function ChatInterface() {
     setStreamingContent('');
     cancelRequestedRef.current = false;
     try {
-      const accumulatedContent = await streamReply(msgs, []);
+      const accumulatedContent = await streamReply(msgs, [], conv.id);
       if (accumulatedContent) {
         addMessage(conv.id, { role: 'assistant', content: normalizeCaliliResponse(accumulatedContent) });
       } else {
@@ -424,6 +435,22 @@ export default function ChatInterface() {
           <div className="border-t border-white/10 bg-chat-bg px-4 py-3">
             <div className="mx-auto flex max-w-3xl flex-wrap gap-2">
               {generatedFiles.map((file) => (
+                file.mime.startsWith('video/') || file.mime.startsWith('audio/') ? (
+                  <div key={file.id} className="w-full max-w-md rounded-xl border border-white/10 bg-white/5 p-2">
+                    {file.mime.startsWith('video/') ? (
+                      <video controls src={`data:${file.mime};base64,${file.base64}`} className="w-full rounded-lg" />
+                    ) : (
+                      <audio controls src={`data:${file.mime};base64,${file.base64}`} className="w-full" />
+                    )}
+                    <button
+                      onClick={() => downloadToolFile(file)}
+                      className="mt-2 flex items-center gap-1.5 px-1 text-sm text-emerald-200 hover:text-emerald-100"
+                      title="Descargar archivo"
+                    >
+                      <Download className="h-4 w-4" /> {file.name}
+                    </button>
+                  </div>
+                ) : (
                 <button
                   key={file.id}
                   onClick={() => downloadToolFile(file)}
@@ -448,6 +475,7 @@ export default function ChatInterface() {
                     </>
                   )}
                 </button>
+                )
               ))}
             </div>
           </div>
