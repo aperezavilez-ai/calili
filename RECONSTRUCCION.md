@@ -123,3 +123,7 @@ Motivo (juicio de Luis, 2026-11-23): las respuestas salían de miles de palabras
 - Herramientas recordar/olvidar: el modelo guarda hechos durables (nombre, negocio, preferencias) en el momento en que el usuario los dice, sin esperar a que se lo pidan. Los hechos viajan en cada mensaje (sección MEMORIA DEL USUARIO del prompt) y se usan con naturalidad.
 - Persistencia doble: localStorage (funciona sin cuenta y sin migración) + tabla memory_facts en Supabase (migración 003, RLS por usuario) cuando hay sesión; ambas se fusionan sin duplicados. El guardado lo aplica el cliente al recibir el evento {memory} del SSE.
 - El modo voz también recuerda: su pasada ligera incluye solo las herramientas de memoria (las pesadas siguen fuera por latencia).
+
+## v2.7.1 — Visión: Groq retiró Llama 4 Scout
+- Error en vivo de Luis (2026-11-23): «The model meta-llama/llama-4-scout-17b-16e-instruct does not exist» (404 model_not_found). Verificado en fuentes: Groq anunció el retiro el 2026-06-17 y lo apagó el 2026-07-17 en planes free/developer.
+- La visión pasa a una CADENA de modelos en nexus-gateway (VISION_MODELS): qwen/qwen3.8-27b → qwen/qwen3.6-27b → qwen/qwen3-vl-32b-instruct; ante un 404 model_not_found se prueba el siguiente antes del primer token, y la variable VISION_MODEL puede anteponer un ID propio. Otros errores (401/429) se reportan tal cual.

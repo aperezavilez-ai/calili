@@ -28,7 +28,17 @@ export interface NexusProvider {
 export class NexusConfigError extends Error {}
 
 const GROQ_BASE_URL = process.env.GROQ_BASE_URL || 'https://api.groq.com/openai/v1';
-export const VISION_MODEL = process.env.VISION_MODEL || 'meta-llama/llama-4-scout-17b-16e-instruct';
+// Groq retiro llama-4-scout (apagado el 2026-07-17 en planes free/developer:
+// devolvia 404 model_not_found). La vision vive en la familia Qwen-VL; se
+// prueban en orden hasta que uno responda, y VISION_MODEL puede anteponer
+// un ID propio si Groq vuelve a mover el catalogo.
+export const VISION_MODELS: string[] = [
+  ...(process.env.VISION_MODEL ? [process.env.VISION_MODEL] : []),
+  'qwen/qwen3.8-27b',
+  'qwen/qwen3.6-27b',
+  'qwen/qwen3-vl-32b-instruct',
+];
+export const VISION_MODEL = VISION_MODELS[0];
 export const DEFAULT_NEXUS_MODEL = 'openai/gpt-oss-120b';
 const FIRST_TOKEN_TIMEOUT_MS = 20000;
 
@@ -231,25 +241,39 @@ export async function* streamVisionChat(
   signal?: AbortSignal,
 ): AsyncGenerator<string> {
   const provider = groqProvider();
-  const response = await fetch(`${provider.baseUrl}/chat/completions`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${provider.apiKey}`,
-    },
-    body: JSON.stringify({
-      model: VISION_MODEL,
-      messages,
-      stream: true,
-      max_completion_tokens: 2048,
-    }),
-    signal,
-  });
-
-  if (!response.ok || !response.body) {
-    const detail = await response.text().catch(() => '');
-    throw new Error(`El modelo de visión respondió ${response.status}. ${detail.slice(0, 300)}`);
+  let response: Response | null = null;
+  let lastStatus = 0;
+  for (const model of VISION_MODELS) {
+    const attempt = await fetch(`${provider.baseUrl}/chat/completions`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${provider.apiKey}`,
+      },
+      body: JSON.stringify({
+        model,
+        messages,
+        stream: true,
+        max_completion_tokens: 2048,
+      }),
+      signal,
+    });
+    if (attempt.ok && attempt.body) {
+      response = attempt;
+      break;
+    }
+    lastStatus = attempt.status;
+    const detail = await attempt.text().catch(() => '');
+    // Solo se prueba el siguiente modelo si este no existe; otro error
+    // (401, 429, 500) se reporta tal cual.
+    if (attempt.status !== 404 || !detail.includes('model_not_found')) {
+      throw new Error(`El modelo de visión respondió ${attempt.status}. ${detail.slice(0, 300)}`);
+    }
   }
+  if (!response || !response.body) {
+    throw new Error(`Ningún modelo de visión de Groq respondió (último estado ${lastStatus}). Groq pudo haber retirado el modelo actual; avísale a Luis para actualizar el ID.`);
+  }
+
 
   const reader = response.body.getReader();
   const decoder = new TextDecoder();
