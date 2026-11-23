@@ -65,6 +65,8 @@ export async function POST(req: NextRequest) {
       webSearch: caps.webSearch,
       readRepos: caps.readRepos,
       vision: true,
+      imageGen: caps.imageGen,
+      imageEdit: caps.imageEdit,
     }) + (voiceMode
       ? '\n\nMODO VOZ (el usuario te escucha, no te lee): responde conversacional y breve, de 1 a 3 frases cortas. Nada de listas, tablas, encabezados ni markdown.'
       : '');
@@ -86,6 +88,44 @@ export async function POST(req: NextRequest) {
 
           // --- Camino de visión: hay imágenes adjuntas -------------------
           if (imageList.length > 0) {
+            // Primero: ¿pide crear/recrear una imagen? El modelo de texto
+            // decide con las herramientas; si llama crear_imagen, la imagen
+            // adjunta viaja en el contexto del servidor (no en los args).
+            if (!voiceMode && caps.imageGen && process.env.GROQ_API_KEY) {
+              try {
+                const note: NexusMessage = {
+                  role: 'system',
+                  content: 'El usuario adjuntó una imagen en este mensaje (la tienes en el servidor). Si pide crear, recrear, modificar o generar una imagen, llama crear_imagen con usar_adjunta=true y un prompt en inglés que describa la imagen FINAL completa. Si solo pide analizarla o preguntar por ella, no llames herramientas.',
+                };
+                const completion = await completeWithTools(
+                  [...fullMessages, note] as unknown[],
+                  toolDefinitions(caps),
+                  req.signal,
+                );
+                if (completion.toolCalls.length > 0) {
+                  const workingMessages: unknown[] = [
+                    ...fullMessages,
+                    { role: 'assistant', content: completion.content || null, tool_calls: completion.toolCalls },
+                  ];
+                  const files: GeneratedFile[] = [];
+                  for (const call of completion.toolCalls.slice(0, 3)) {
+                    const execution = await executeTool(call.function.name, call.function.arguments, { images: imageList });
+                    if (execution.file) files.push(execution.file);
+                    workingMessages.push({ role: 'tool', tool_call_id: call.id, content: execution.resultForModel });
+                  }
+                  for (const file of files) send(controller, { file });
+                  for await (const chunk of streamNexusChat(workingMessages as unknown as NexusMessage[], { signal: req.signal })) {
+                    send(controller, { content: chunk });
+                  }
+                  controller.enqueue(encoder.encode('data: [DONE]\n\n'));
+                  return;
+                }
+              } catch (error) {
+                if (error instanceof NexusConfigError) throw error;
+                console.error('Calili: pasada de imagen falló, se usa visión directa', error);
+              }
+            }
+
             const visionMessages: unknown[] = [{ role: 'system', content: systemPrompt }];
             history.forEach((message, index) => {
               const isLastUser = index === history.length - 1 && message.role === 'user';
@@ -131,7 +171,7 @@ export async function POST(req: NextRequest) {
                 ];
                 const files: GeneratedFile[] = [];
                 for (const call of completion.toolCalls.slice(0, 3)) {
-                  const execution = await executeTool(call.function.name, call.function.arguments);
+                  const execution = await executeTool(call.function.name, call.function.arguments, { images: imageList });
                   if (execution.file) files.push(execution.file);
                   workingMessages.push({
                     role: 'tool',

@@ -5,6 +5,7 @@ import { X, Mic, MicOff } from 'lucide-react';
 import { useChatStore } from '@/store/chat-store';
 import { useSettingsStore } from '@/store/settings-store';
 import { normalizeCaliliResponse } from '@/lib/response-policy';
+import { playEarcon } from '@/lib/earcons';
 
 export interface GeneratedFile { id: string; name: string; mime: string; base64: string }
 
@@ -46,6 +47,7 @@ export default function VoiceMode({ onClose, onFile }: VoiceModeProps) {
   const pumpingRef = useRef(false);
   const streamDoneRef = useRef(false);
   const turnDoneRef = useRef<(() => void) | null>(null);
+  const speakCueRef = useRef(false);
 
   const stopTracks = useCallback(() => {
     cancelAnimationFrame(rafRef.current);
@@ -89,6 +91,7 @@ export default function VoiceMode({ onClose, onFile }: VoiceModeProps) {
     pumpingRef.current = true;
     while (openRef.current && !mutedRef.current && queueRef.current.length > 0) {
       const item = queueRef.current.shift()!;
+      if (!speakCueRef.current) { speakCueRef.current = true; playEarcon('speak'); }
       const blob = await item.audio;
       if (!openRef.current) break;
       if (blob) {
@@ -142,19 +145,26 @@ export default function VoiceMode({ onClose, onFile }: VoiceModeProps) {
     const decoder = new TextDecoder();
     let buffer = '';
     let full = '';
-    let pendingSentence = '';
+    // Fluidez: se habla en maximo 2 bloques. La primera frase sale sola para
+    // empezar rapido; TODO el resto se sintetiza en una sola pasada, con su
+    // arco de prosodia completo (sin cortes frase a frase = sin robot).
+    let firstBuffer = '';
+    let firstSent = false;
+    let restBuffer = '';
     const sentenceBoundary = /[.!?…]+["»)]?\s+/;
 
     const feedContent = (content: string) => {
       full += content;
-      pendingSentence += content;
-      let match = sentenceBoundary.exec(pendingSentence);
-      while (match) {
+      if (firstSent) { restBuffer += content; return; }
+      firstBuffer += content;
+      const match = sentenceBoundary.exec(firstBuffer);
+      if (match) {
         const end = match.index + match[0].length;
-        const sentence = pendingSentence.slice(0, end).trim();
-        pendingSentence = pendingSentence.slice(end);
+        const sentence = firstBuffer.slice(0, end).trim();
+        restBuffer += firstBuffer.slice(end);
+        firstBuffer = '';
+        firstSent = true;
         if (sentence) enqueueSentence(sentence);
-        match = sentenceBoundary.exec(pendingSentence);
       }
     };
 
@@ -180,7 +190,8 @@ export default function VoiceMode({ onClose, onFile }: VoiceModeProps) {
         }
       }
     }
-    if (pendingSentence.trim()) enqueueSentence(pendingSentence.trim());
+    const remainder = (firstSent ? restBuffer : firstBuffer).trim();
+    if (remainder) enqueueSentence(remainder);
     const reply = normalizeCaliliResponse(full.trim());
     if (!reply) throw new Error('respuesta vacia');
     useChatStore.getState().addMessage(conversationId, { role: 'assistant', content: reply });
@@ -230,6 +241,7 @@ export default function VoiceMode({ onClose, onFile }: VoiceModeProps) {
 
       const stopped = new Promise<void>((resolve) => { recorder.onstop = () => resolve(); });
       recorder.start(250);
+      playEarcon('listen');
       rafRef.current = requestAnimationFrame(tick);
       await stopped;
       cancelAnimationFrame(rafRef.current);
@@ -253,6 +265,7 @@ export default function VoiceMode({ onClose, onFile }: VoiceModeProps) {
       setCaption(`Tú: ${userText}`);
 
       streamDoneRef.current = false;
+      speakCueRef.current = false;
       const turnDone = new Promise<void>((resolve) => { turnDoneRef.current = resolve; });
       const reply = await askCalili(userText);
       if (!openRef.current || mutedRef.current) return;
@@ -269,6 +282,7 @@ export default function VoiceMode({ onClose, onFile }: VoiceModeProps) {
       void listenOnce();
     } catch {
       if (!openRef.current) return;
+      playEarcon('error');
       setPhase('error');
       setCaption('No pude usar el micrófono o falló la conexión. Toca la orbe para reintentar.');
     }
@@ -301,10 +315,12 @@ export default function VoiceMode({ onClose, onFile }: VoiceModeProps) {
       turnDoneRef.current = null;
       done?.();
       setLevel(0);
+      playEarcon('mute');
       setCaption('Micrófono en pausa. Toca el micrófono para seguir hablando.');
     } else {
       mutedRef.current = false;
       setMuted(false);
+      playEarcon('unmute');
       void listenOnce();
     }
   };

@@ -1,4 +1,5 @@
 import { generateFile, type CreateFileArgs, type GeneratedFile } from '@/lib/file-generator';
+import { createImage } from '@/lib/image-generator';
 
 // Herramientas que el modelo puede invocar (function calling, formato
 // OpenAI). Se anuncian solo si el servidor tiene lo necesario para
@@ -9,6 +10,8 @@ export interface ToolCapabilities {
   createFiles: boolean;
   webSearch: boolean;
   readRepos: boolean;
+  imageGen: boolean;
+  imageEdit: boolean;
 }
 
 export function toolCapabilities(): ToolCapabilities {
@@ -16,6 +19,8 @@ export function toolCapabilities(): ToolCapabilities {
     createFiles: true,
     webSearch: Boolean(process.env.TAVILY_API_KEY),
     readRepos: true,
+    imageGen: true,
+    imageEdit: Boolean(process.env.OPENAI_API_KEY),
   };
 }
 
@@ -47,6 +52,25 @@ export function toolDefinitions(caps: ToolCapabilities) {
             },
           },
           required: ['formato', 'nombre', 'contenido'],
+        },
+      },
+    });
+  }
+
+  if (caps.imageGen) {
+    tools.push({
+      type: 'function',
+      function: {
+        name: 'crear_imagen',
+        description:
+          'Crea una imagen real (JPG/PNG) y se la muestra al usuario con opción de descarga. Úsala cuando pida una imagen, un logo, un flyer visual, una ilustración o recrear/modificar una imagen. Escribe el prompt en INGLÉS, muy detallado: sujeto, estilo, colores, composición, iluminación y formato. Si el usuario adjuntó una imagen y pide recrearla o cambiarla, marca usar_adjunta=true y describe en el prompt la imagen FINAL completa que quiere.',
+        parameters: {
+          type: 'object',
+          properties: {
+            prompt: { type: 'string', description: 'Descripción detallada de la imagen final, en inglés.' },
+            usar_adjunta: { type: 'boolean', description: 'true si debe basarse en la imagen que el usuario adjuntó en este mensaje.' },
+          },
+          required: ['prompt'],
         },
       },
     });
@@ -158,7 +182,7 @@ async function executeReadRepo(url: string): Promise<string> {
   ].join('\n');
 }
 
-export async function executeTool(name: string, rawArgs: string): Promise<ToolExecution> {
+export async function executeTool(name: string, rawArgs: string, context?: { images?: string[] }): Promise<ToolExecution> {
   let args: Record<string, unknown> = {};
   try {
     args = JSON.parse(rawArgs || '{}');
@@ -173,6 +197,16 @@ export async function executeTool(name: string, rawArgs: string): Promise<ToolEx
         return {
           resultForModel: `Archivo creado: ${file.name}. Ya se le mostró al usuario su tarjeta de descarga. Confírmalo en una frase breve, sin pegar el contenido en el chat.`,
           file,
+        };
+      }
+      case 'crear_imagen': {
+        const result = await createImage(
+          { prompt: String(args.prompt ?? ''), usar_adjunta: Boolean(args.usar_adjunta) },
+          context?.images?.[0],
+        );
+        return {
+          resultForModel: `Imagen creada: ${result.file.name} (motor: ${result.engine}). Ya se le mostró al usuario con vista previa y botón de descarga. ${result.note ?? ''} Confírmalo en una frase breve.`,
+          file: result.file,
         };
       }
       case 'buscar_web':

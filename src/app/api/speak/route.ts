@@ -4,16 +4,38 @@ import { MsEdgeTTS, OUTPUT_FORMAT } from 'msedge-tts';
 export const runtime = 'nodejs';
 export const maxDuration = 30;
 
-const VOICE = process.env.CALILI_VOICE || 'es-MX-DaliaNeural';
-const MAX_CHARS = 700;
+const EDGE_VOICE = process.env.CALILI_VOICE || 'es-MX-DaliaNeural';
+const OPENAI_VOICE = process.env.CALILI_OPENAI_VOICE || 'shimmer';
+const MAX_CHARS = 900;
+
+async function openaiTts(text: string): Promise<Buffer> {
+  const key = process.env.OPENAI_API_KEY;
+  if (!key) throw new Error('sin clave openai');
+  const res = await fetch('https://api.openai.com/v1/audio/speech', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${key}` },
+    body: JSON.stringify({
+      model: 'gpt-4o-mini-tts',
+      voice: OPENAI_VOICE,
+      input: text.slice(0, MAX_CHARS),
+      response_format: 'mp3',
+      instructions: 'Habla en español latinoamericano neutro, con tono cálido, natural y conversacional, como una asistente cercana. Ritmo fluido, sin pausas artificiales.',
+    }),
+    signal: AbortSignal.timeout(25000),
+  });
+  if (!res.ok) throw new Error(`openai tts ${res.status}`);
+  const audio = Buffer.from(await res.arrayBuffer());
+  if (audio.length < 200) throw new Error('openai audio vacio');
+  return audio;
+}
 
 async function edgeTts(text: string): Promise<Buffer> {
   const tts = new MsEdgeTTS();
-  await tts.setMetadata(VOICE, OUTPUT_FORMAT.AUDIO_24KHZ_48KBITRATE_MONO_MP3);
-  const { audioStream } = tts.toStream(text.slice(0, MAX_CHARS));
+  await tts.setMetadata(EDGE_VOICE, OUTPUT_FORMAT.AUDIO_24KHZ_96KBITRATE_MONO_MP3);
+  const { audioStream } = tts.toStream(text.slice(0, MAX_CHARS), { rate: 0.94 });
   const chunks: Buffer[] = [];
   await new Promise<void>((resolve, reject) => {
-    const timer = setTimeout(() => reject(new Error('edge timeout')), 9000);
+    const timer = setTimeout(() => reject(new Error('edge timeout')), 15000);
     audioStream.on('data', (chunk: Buffer) => chunks.push(chunk));
     audioStream.on('end', () => { clearTimeout(timer); resolve(); });
     audioStream.on('error', (err: Error) => { clearTimeout(timer); reject(err); });
@@ -70,19 +92,21 @@ export async function POST(req: NextRequest) {
     return Response.json({ error: 'Falta el texto a leer' }, { status: 400 });
   }
 
-  try {
-    const audio = await edgeTts(text);
-    return new Response(new Uint8Array(audio), {
-      headers: { 'Content-Type': 'audio/mpeg', 'Cache-Control': 'no-store', 'X-Voice-Engine': 'edge-dalia' },
-    });
-  } catch {
+  const engines: Array<{ name: string; run: (t: string) => Promise<Buffer> }> = [
+    { name: 'openai', run: openaiTts },
+    { name: 'edge-dalia', run: edgeTts },
+    { name: 'google', run: googleTts },
+  ];
+  let lastError = 'sin motores';
+  for (const engine of engines) {
     try {
-      const audio = await googleTts(text);
+      const audio = await engine.run(text);
       return new Response(new Uint8Array(audio), {
-        headers: { 'Content-Type': 'audio/mpeg', 'Cache-Control': 'no-store', 'X-Voice-Engine': 'google' },
+        headers: { 'Content-Type': 'audio/mpeg', 'Cache-Control': 'no-store', 'X-Voice-Engine': engine.name },
       });
     } catch (err: any) {
-      return Response.json({ error: `Voz no disponible: ${err?.message || 'error'}` }, { status: 502 });
+      lastError = err?.message || engine.name;
     }
   }
+  return Response.json({ error: `Voz no disponible: ${lastError}` }, { status: 502 });
 }

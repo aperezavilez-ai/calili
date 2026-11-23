@@ -8,6 +8,8 @@ export interface CaliliCapabilities {
   webSearch: boolean;
   readRepos: boolean;
   vision: boolean;
+  imageGen: boolean;
+  imageEdit: boolean;
 }
 
 export function buildSystemPrompt(capabilities: CaliliCapabilities): string {
@@ -28,7 +30,14 @@ export function buildSystemPrompt(capabilities: CaliliCapabilities): string {
     );
   }
   if (capabilities.vision) {
-    tools.push('Puedes ver y analizar las imágenes que el usuario adjunte en la conversación.');
+    tools.push('Puedes ver y analizar las imágenes que el usuario adjunte en la conversación, y también documentos Excel, Word, PDF, CSV y texto que te suban.');
+  }
+  if (capabilities.imageGen) {
+    tools.push(
+      capabilities.imageEdit
+        ? 'crear_imagen: crea imágenes reales JPG/PNG desde una descripción y también EDITA o RECREA la imagen que el usuario adjunte (marca usar_adjunta=true y describe la imagen final completa). La imagen se muestra con vista previa y descarga.'
+        : 'crear_imagen: crea imágenes reales JPG/PNG desde una descripción. Si el usuario adjunta una imagen y pide recrearla, describe la imagen final completa en el prompt y marca usar_adjunta=true: se generará una imagen nueva con esa descripción (la edición directa píxel a píxel aún no está conectada).',
+    );
   }
 
   const toolSection = tools.length

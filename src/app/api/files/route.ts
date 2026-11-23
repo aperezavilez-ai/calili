@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import mammoth from 'mammoth';
 import { extractText, getDocumentProxy } from 'unpdf';
+import ExcelJS from 'exceljs';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -35,6 +36,30 @@ export async function POST(req: NextRequest) {
         const pdf = await getDocumentProxy(new Uint8Array(buffer));
         const parsed = await extractText(pdf, { mergePages: true });
         text = trimExtractedText(String(parsed.text));
+      } else if (
+        file.type === 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' ||
+        extension === 'xlsx'
+      ) {
+        const workbook = new ExcelJS.Workbook();
+        await workbook.xlsx.load(buffer as unknown as ArrayBuffer);
+        const sheets: string[] = [];
+        workbook.eachSheet((sheet) => {
+          const rows: string[] = [];
+          sheet.eachRow((row) => {
+            const values = (row.values as unknown[]).slice(1).map((v) => {
+              if (v === null || v === undefined) return '';
+              if (v instanceof Date) return v.toISOString().slice(0, 10);
+              if (typeof v === 'object') {
+                const obj = v as { text?: string; result?: unknown };
+                return String(obj.text ?? obj.result ?? '');
+              }
+              return String(v);
+            });
+            rows.push(values.join(' | '));
+          });
+          sheets.push(`HOJA: ${sheet.name}\n${rows.join('\n')}`);
+        });
+        text = trimExtractedText(sheets.join('\n\n'));
       } else if (
         file.type === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' ||
         extension === 'docx'

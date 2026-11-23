@@ -12,6 +12,7 @@ import { fetchConversations, uploadLocalConversation } from '@/lib/chat-db';
 import { AuthScreen } from '@/components/AuthScreen';
 import VoiceMode from '@/components/VoiceMode';
 import { normalizeCaliliResponse } from '@/lib/response-policy';
+import { InstallBanner } from '@/components/InstallBanner';
 import { Download } from 'lucide-react';
 
 export default function ChatInterface() {
@@ -47,10 +48,27 @@ export default function ChatInterface() {
     const dx = e.changedTouches[0].clientX - touchStartX.current;
     const startX = touchStartX.current;
     touchStartX.current = null;
-    if (!isSidebarOpen && startX < 28 && dx > 64 && window.innerWidth < 768) toggleSidebar();
+    if (!isSidebarOpen && startX >= 28 && startX < 140 && dx > 64 && window.innerWidth < 768) toggleSidebar();
   };
 
   const currentConversation = conversations.find((c) => c.id === currentConversationId);
+
+  // Centinela de historial (movil): el gesto "atras" del sistema primero
+  // cierra el panel si esta abierto, y si no, se consume sin salir de la app.
+  // Sin esto, deslizar desde el borde invoca el "atras" del sistema y la
+  // PWA se cierra de golpe.
+  useEffect(() => {
+    if (window.innerWidth >= 768) return;
+    window.history.pushState({ caliliGuard: true }, '');
+    const onPopState = () => {
+      if (useChatStore.getState().isSidebarOpen) {
+        useChatStore.getState().toggleSidebar();
+        window.history.pushState({ caliliGuard: true }, '');
+      }
+    };
+    window.addEventListener('popstate', onPopState);
+    return () => window.removeEventListener('popstate', onPopState);
+  }, []);
 
   // Solo al montar: en movil el panel arranca cerrado. (El efecto anterior
   // dependia de isSidebarOpen y cerraba el panel 500 ms despues de abrirlo.)
@@ -333,12 +351,29 @@ export default function ChatInterface() {
                   className="flex items-center gap-2 rounded-xl border border-emerald-400/30 bg-emerald-500/15 px-3 py-2 text-sm text-emerald-200 hover:bg-emerald-500/25"
                   title="Descargar archivo"
                 >
-                  <Download className="h-4 w-4" /> {file.name}
+                  {file.mime.startsWith('image/') ? (
+                    <>
+                      {/* eslint-disable-next-line @next/next/no-img-element */}
+                      <img
+                        src={`data:${file.mime};base64,${file.base64}`}
+                        alt={file.name}
+                        className="h-14 w-14 rounded-lg object-cover"
+                      />
+                      <span className="flex items-center gap-1.5">
+                        <Download className="h-4 w-4" /> {file.name}
+                      </span>
+                    </>
+                  ) : (
+                    <>
+                      <Download className="h-4 w-4" /> {file.name}
+                    </>
+                  )}
                 </button>
               ))}
             </div>
           </div>
         )}
+        <InstallBanner />
         <InputBox onSendMessage={handleSendMessage} onStopMessage={stopResponse} isLoading={isLoading} onVoiceMode={() => setVoiceModeOpen(true)} />
       </main>
       {voiceModeOpen && (

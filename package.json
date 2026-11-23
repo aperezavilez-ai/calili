@@ -1,6 +1,6 @@
 {
   "name": "calili",
-  "version": "2.4.0",
+  "version": "2.6.0",
   "description": "Calili - Clone de ChatGPT como PWA para iOS y Android",
   "private": true,
   "scripts": {
