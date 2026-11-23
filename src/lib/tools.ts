@@ -1,0 +1,190 @@
+import { generateFile, type CreateFileArgs, type GeneratedFile } from '@/lib/file-generator';
+
+// Herramientas que el modelo puede invocar (function calling, formato
+// OpenAI). Se anuncian solo si el servidor tiene lo necesario para
+// ejecutarlas: crear_archivo siempre; buscar_web solo con TAVILY_API_KEY;
+// leer_repositorio siempre (GitHub público no requiere clave).
+
+export interface ToolCapabilities {
+  createFiles: boolean;
+  webSearch: boolean;
+  readRepos: boolean;
+}
+
+export function toolCapabilities(): ToolCapabilities {
+  return {
+    createFiles: true,
+    webSearch: Boolean(process.env.TAVILY_API_KEY),
+    readRepos: true,
+  };
+}
+
+export function toolDefinitions(caps: ToolCapabilities) {
+  const tools: unknown[] = [];
+
+  if (caps.createFiles) {
+    tools.push({
+      type: 'function',
+      function: {
+        name: 'crear_archivo',
+        description:
+          'Crea un archivo real y descargable para el usuario. Úsala cuando pida un documento, un Word, un Excel, un PDF, un CSV o cualquier archivo. Para Excel/CSV con datos tabulares, manda columnas y filas.',
+        parameters: {
+          type: 'object',
+          properties: {
+            formato: { type: 'string', enum: ['docx', 'xlsx', 'pdf', 'csv', 'md', 'txt'] },
+            nombre: { type: 'string', description: 'Nombre del archivo, sin extensión.' },
+            titulo: { type: 'string', description: 'Título visible dentro del documento.' },
+            contenido: {
+              type: 'string',
+              description: 'Contenido en Markdown sencillo (# títulos, - viñetas, tablas con |). En Excel/CSV puede ir vacío si mandas columnas y filas.',
+            },
+            columnas: { type: 'array', items: { type: 'string' }, description: 'Encabezados para Excel/CSV.' },
+            filas: {
+              type: 'array',
+              items: { type: 'array', items: { type: 'string' } },
+              description: 'Filas de datos para Excel/CSV.',
+            },
+          },
+          required: ['formato', 'nombre', 'contenido'],
+        },
+      },
+    });
+  }
+
+  if (caps.webSearch) {
+    tools.push({
+      type: 'function',
+      function: {
+        name: 'buscar_web',
+        description:
+          'Busca información actual en internet y devuelve resultados con sus fuentes. Úsala para datos recientes, precios, noticias o cualquier hecho externo verificable.',
+        parameters: {
+          type: 'object',
+          properties: {
+            consulta: { type: 'string', description: 'La búsqueda, en palabras clave.' },
+          },
+          required: ['consulta'],
+        },
+      },
+    });
+  }
+
+  if (caps.readRepos) {
+    tools.push({
+      type: 'function',
+      function: {
+        name: 'leer_repositorio',
+        description:
+          'Lee un repositorio público de GitHub: descripción, README y estructura de archivos. Úsala cuando el usuario comparta un enlace de GitHub o pida analizar un repositorio.',
+        parameters: {
+          type: 'object',
+          properties: {
+            url: { type: 'string', description: 'URL del repositorio, p. ej. https://github.com/usuario/proyecto' },
+          },
+          required: ['url'],
+        },
+      },
+    });
+  }
+
+  return tools;
+}
+
+export interface ToolExecution {
+  resultForModel: string;
+  file?: GeneratedFile;
+}
+
+async function executeSearch(consulta: string): Promise<string> {
+  const response = await fetch('https://api.tavily.com/search', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${process.env.TAVILY_API_KEY}`,
+    },
+    body: JSON.stringify({
+      query: consulta,
+      search_depth: 'basic',
+      max_results: 5,
+      include_answer: false,
+      include_raw_content: false,
+    }),
+  });
+  if (!response.ok) return `La búsqueda falló (HTTP ${response.status}). Responde sin ella y avisa al usuario.`;
+  const data = await response.json();
+  const results = (data.results ?? []) as Array<{ title: string; url: string; content: string }>;
+  if (results.length === 0) return 'La búsqueda no devolvió resultados.';
+  return results
+    .map((r, i) => `[${i + 1}] ${r.title}\n${r.url}\n${(r.content ?? '').slice(0, 600)}`)
+    .join('\n\n');
+}
+
+async function executeReadRepo(url: string): Promise<string> {
+  const match = /github\.com\/([^/\s]+)\/([^/\s#?]+)/.exec(url);
+  if (!match) return 'Esa URL no parece de GitHub. Pide al usuario que la revise.';
+  const [, owner, repoRaw] = match;
+  const repo = repoRaw.replace(/\.git$/, '');
+  const headers = { Accept: 'application/vnd.github+json', 'User-Agent': 'Calili' };
+
+  const [repoRes, readmeRes, treeRes] = await Promise.all([
+    fetch(`https://api.github.com/repos/${owner}/${repo}`, { headers }),
+    fetch(`https://api.github.com/repos/${owner}/${repo}/readme`, {
+      headers: { ...headers, Accept: 'application/vnd.github.raw+json' },
+    }),
+    fetch(`https://api.github.com/repos/${owner}/${repo}/git/trees/HEAD?recursive=1`, { headers }),
+  ]);
+
+  if (!repoRes.ok) return `No se pudo leer el repositorio ${owner}/${repo} (HTTP ${repoRes.status}). Puede ser privado o no existir.`;
+  const info = await repoRes.json();
+  const readme = readmeRes.ok ? (await readmeRes.text()).slice(0, 6000) : '(sin README)';
+  let files = '';
+  if (treeRes.ok) {
+    const tree = await treeRes.json();
+    files = ((tree.tree ?? []) as Array<{ path: string; type: string }>)
+      .filter((t) => t.type === 'blob')
+      .slice(0, 120)
+      .map((t) => t.path)
+      .join('\n');
+  }
+
+  return [
+    `Repositorio: ${info.full_name}`,
+    `Descripción: ${info.description ?? '(sin descripción)'}`,
+    `Lenguaje principal: ${info.language ?? 'n/d'} · Estrellas: ${info.stargazers_count} · Ramas: ${info.default_branch}`,
+    `Actualizado: ${info.updated_at}`,
+    `\nARCHIVOS:\n${files || '(no se pudo listar)'}`,
+    `\nREADME:\n${readme}`,
+  ].join('\n');
+}
+
+export async function executeTool(name: string, rawArgs: string): Promise<ToolExecution> {
+  let args: Record<string, unknown> = {};
+  try {
+    args = JSON.parse(rawArgs || '{}');
+  } catch {
+    return { resultForModel: 'Los argumentos de la herramienta llegaron con formato inválido.' };
+  }
+
+  try {
+    switch (name) {
+      case 'crear_archivo': {
+        const file = await generateFile(args as unknown as CreateFileArgs);
+        return {
+          resultForModel: `Archivo creado: ${file.name}. Ya se le mostró al usuario su tarjeta de descarga. Confírmalo en una frase breve, sin pegar el contenido en el chat.`,
+          file,
+        };
+      }
+      case 'buscar_web':
+        return { resultForModel: await executeSearch(String(args.consulta ?? '')) };
+      case 'leer_repositorio':
+        return { resultForModel: await executeReadRepo(String(args.url ?? '')) };
+      default:
+        return { resultForModel: `Herramienta desconocida: ${name}` };
+    }
+  } catch (error) {
+    return {
+      resultForModel: `La herramienta ${name} falló: ${error instanceof Error ? error.message : 'error desconocido'}. Explícaselo al usuario en una frase.`,
+    };
+  }
+}

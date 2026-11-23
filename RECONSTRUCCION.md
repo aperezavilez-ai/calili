@@ -36,3 +36,53 @@
 - **Fase 2:** auth real + conversaciones en Supabase (esquema calili), búsqueda web real con citas, imágenes con proveedor real, visión.
 - **Fase 3:** memoria de largo plazo, proyectos/asistentes, artefactos y ejecución de código.
 - **Fase 4:** despliegue en Vercel con `GROQ_API_KEY` en variables del proyecto y aceptación integral en vivo.
+
+## Fase 2 — Cuenta real, historial en la nube, tablas y dictado (esta entrega)
+
+### Nuevo
+- `src/lib/supabase.ts` + `src/lib/chat-db.ts`: cliente Supabase (solo clave anon; la seguridad la da el RLS de la migración 002) y persistencia de conversaciones/mensajes. Con sesión activa, cada alta/baja/cambio del store se sincroniza; el respaldo local (localStorage) sigue existiendo para modo sin conexión.
+- `src/components/AuthScreen.tsx` + compuerta en `ChatInterface`: si Supabase está configurado y no hay sesión, Calili pide correo/contraseña (login y registro). Al primer ingreso, el historial local se sube a la cuenta para no perderlo. En el Sidebar se ve el correo y el botón Salir (cerrar sesión limpia la vista local).
+- Si las variables `NEXT_PUBLIC_SUPABASE_*` no están, Calili arranca en **modo local** (como la Fase 1): así el entorno de desarrollo sin claves nunca se rompe.
+- `src/lib/markdown-fix.ts`: reparador de tablas Markdown (causa raíz del render roto de la captura de Luis: encabezados pegados al párrafo y delimitadores pegados a las filas). Se aplica al render de cada mensaje del asistente. Probado con los patrones exactos de la captura (4 casos PASS).
+- `src/app/api/transcribe/route.ts` + micrófono nuevo en `InputBox`: dictado con **Whisper de Groq** (`whisper-large-v3-turbo`, español) vía MediaRecorder. Fuera `webkitSpeechRecognition`, que transcribía enredado.
+
+### Pasos de Luis para esta fase
+1. Supabase → **Authentication → Providers → Email**: desactivar **Confirm email** (app personal: entras directo al registrarte, sin esperar correo).
+2. Variables en `.env.local` y en Vercel (Production) + Redeploy: `NEXT_PUBLIC_SUPABASE_URL=https://zspoeuvmreqyxahdfkyh.supabase.co` y `NEXT_PUBLIC_SUPABASE_ANON_KEY=` (la anon public de Settings → API).
+3. Aplicar el paquete, commit y push como la Fase 1.
+
+### Verificación de Lu
+- Build completo (ver nota de entrega) y prueba extremo a extremo de `/api/transcribe` contra un servidor simulado de Groq: el audio llega, Whisper responde y la ruta devuelve el texto.
+- La persistencia contra el Supabase real se juzga en vivo (login de Luis → conversar → cerrar sesión → entrar y ver el historial): Lu no tiene la clave anon y no debe tenerla en el chat.
+
+### Lo que sigue (Fase 3)
+- Búsqueda web real con citas (requiere una cuenta gratuita de búsqueda, p. ej. Tavily: una clave más para Luis).
+- Visión con modelo multimodal de Groq y generación de imágenes con proveedor real.
+- Memoria de largo plazo y proyectos/asistentes.
+
+## Fase 3 — Herramientas reales y disciplina de estilo (esta entrega)
+
+Motivo (juicio de Luis, 2026-11-23): las respuestas salían de miles de palabras y el modelo fingía capacidades (ofrecía /imagine y enlaces a imágenes inexistentes). Causas: no había prompt de sistema con disciplina de estilo y no existía ninguna herramienta real.
+
+### Nuevo
+- `src/lib/system-prompt.ts`: prompt único con estilo obligatorio (directo, proporcional a lo pedido, sin guías no pedidas, cierre en una línea) y honestidad de capacidades: el modelo solo anuncia las herramientas conectadas en el servidor.
+- **Herramientas (function calling, Groq)** en `src/lib/tools.ts` + pasada de herramientas en `/api/chat` (si falla, cae al streaming normal: nunca deja sin respuesta):
+  - `crear_archivo` (`src/lib/file-generator.ts`): Word .docx, Excel .xlsx, PDF, CSV, MD, TXT reales. El cliente recibe el archivo por SSE y muestra **tarjeta de descarga verde** sobre la caja de texto. Sustituye al viejo flujo que exportaba la respuesta en .md por heurística (eliminado de ChatInterface).
+  - `buscar_web`: Tavily con citas; solo se anuncia si existe `TAVILY_API_KEY`.
+  - `leer_repositorio`: GitHub público (descripción, README, estructura) sin clave.
+- **Visión**: las imágenes adjuntas ya no se descartan; van como `image_url` (base64) al modelo `meta-llama/llama-4-scout-17b-16e-instruct` de Groq (misma clave) y la respuesta llega en streaming. Los documentos (PDF/DOCX/TXT) siguen por `/api/files`.
+- `markdown-fix.ts` endurecido: convierte los `<br>` literales en espacios y envuelve filas de tabla sin `|` inicial cuando las celdas coinciden — el patrón extremo de la captura de Luis queda reconstruido (5 casos PASS).
+- La pasarela ahora honra `GROQ_BASE_URL` (pruebas) y expone `completeWithTools` y `streamVisionChat`.
+
+### Verificación de Lu
+- Build completo PASS. E2E contra Groq simulado: (A) «créame un Excel» → tool call → XLSX real de 6.539 bytes (ZIP válido, celdas Servicio/Precio/datos dentro) + confirmación en streaming; (B) pregunta simple → respuesta breve sin archivo espurio; (C) imagen adjunta → llega como image_url al modelo Scout y su análisis en streaming. Generadores DOCX (8.558 bytes) y PDF (%PDF-) verificados por separado; CSV exacto.
+- `buscar_web` verificado por compuerta: sin `TAVILY_API_KEY` la herramienta ni se anuncia.
+
+### Pasos de Luis para esta fase
+1. (Opcional, activa la búsqueda) Cuenta gratuita en tavily.com → API key → variable **TAVILY_API_KEY** en Vercel (tipo Secret) y en `.env.local`.
+2. Aplicar el paquete (acumulativo: incluye la Fase 2 si aún no se aplicó), `npm install`, commit y push.
+3. Juicio en vivo: pregunta simple → respuesta corta; «créame un Excel de precios» → tarjeta de descarga y archivo que abre; adjuntar una foto → análisis de la imagen; pedir una tabla → tabla dibujada.
+
+### Honestidad de alcance
+- **Generación de imágenes: no incluida.** Groq no ofrece generación de imágenes; meterla exige otro proveedor con su clave. Calili ya no la finge: si la pides, lo dice y ofrece alternativas (p. ej. crear el archivo del diseño en Word/PDF).
+- Memoria de largo plazo y proyectos/asistentes quedan para la Fase 4.

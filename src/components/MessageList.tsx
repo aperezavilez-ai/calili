@@ -4,6 +4,8 @@ import { Message } from '@/store/chat-store';
 import { User } from 'lucide-react';
 import { useEffect, useRef } from 'react';
 import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
+import { fixMarkdownTables } from '@/lib/markdown-fix';
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
 import { vscDarkPlus } from 'react-syntax-highlighter/dist/esm/styles/prism';
 
@@ -97,7 +99,31 @@ export function MessageList({ messages }: MessageListProps) {
                 ) : (
                   <div className="prose prose-invert max-w-none prose-p:leading-relaxed prose-pre:bg-black/20 prose-pre:border prose-pre:border-white/10">
                     <ReactMarkdown
+                      remarkPlugins={[remarkGfm]}
                       components={{
+                        table(props) {
+                          return (
+                            <div className="overflow-x-auto my-3">
+                              <table className="w-full border-collapse text-sm">
+                                {props.children}
+                              </table>
+                            </div>
+                          );
+                        },
+                        th(props) {
+                          return (
+                            <th className="border border-white/20 bg-white/10 px-3 py-2 text-left font-semibold">
+                              {props.children}
+                            </th>
+                          );
+                        },
+                        td(props) {
+                          return (
+                            <td className="border border-white/20 px-3 py-2 align-top">
+                              {props.children}
+                            </td>
+                          );
+                        },
                         code(props) {
                           const { className, children } = props;
                           const match = /language-(\w+)/.exec(className || '');
@@ -123,7 +149,7 @@ export function MessageList({ messages }: MessageListProps) {
                         },
                       }}
                     >
-                      {message.content}
+                      {fixMarkdownTables(message.content)}
                     </ReactMarkdown>
                   </div>
                 )}

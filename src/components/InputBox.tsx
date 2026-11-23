@@ -11,11 +11,14 @@ interface InputBoxProps {
 
 export function InputBox({ onSendMessage, onStopMessage, isLoading }: InputBoxProps) {
   const [input, setInput] = useState('');
-  const [isListening, setIsListening] = useState(false);
+  const [isRecording, setIsRecording] = useState(false);
+  const [isTranscribing, setIsTranscribing] = useState(false);
   const [attachments, setAttachments] = useState<File[]>([]);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const recognitionRef = useRef<any>(null);
+  const recorderRef = useRef<MediaRecorder | null>(null);
+  const chunksRef = useRef<Blob[]>([]);
+  const discardRef = useRef(false);
 
   useEffect(() => {
     if (textareaRef.current) {
@@ -24,47 +27,18 @@ export function InputBox({ onSendMessage, onStopMessage, isLoading }: InputBoxPr
     }
   }, [input]);
 
-  useEffect(() => {
-    // Inicializar reconocimiento de voz
-    if (typeof window !== 'undefined' && 'webkitSpeechRecognition' in window) {
-      const SpeechRecognition = (window as any).webkitSpeechRecognition;
-      recognitionRef.current = new SpeechRecognition();
-      recognitionRef.current.continuous = false;
-      recognitionRef.current.interimResults = false;
-      recognitionRef.current.lang = 'es-ES';
 
-      recognitionRef.current.onresult = (event: any) => {
-        if (window.speechSynthesis?.speaking) {
-          recognitionRef.current?.abort();
-          setIsListening(false);
-          return;
-        }
-        const transcript = event.results[0][0].transcript;
-        setInput(prev => prev + transcript);
-        setIsListening(false);
-      };
 
-      recognitionRef.current.onerror = () => {
-        setIsListening(false);
-      };
 
-      recognitionRef.current.onend = () => {
-        setIsListening(false);
-      };
-    }
-  }, []);
-
-  useEffect(() => {
-    if (!isLoading) return;
-    recognitionRef.current?.abort();
-    setIsListening(false);
-  }, [isLoading]);
 
   const handleSubmit = () => {
     if ((!input.trim() && attachments.length === 0) || isLoading) return;
 
-    recognitionRef.current?.abort();
-    setIsListening(false);
+    if (recorderRef.current && isRecording) {
+      discardRef.current = true;
+      recorderRef.current.stop();
+      setIsRecording(false);
+    }
     onSendMessage(input.trim() || 'Analiza los archivos adjuntos.', attachments);
     setInput('');
     setAttachments([]);
@@ -106,22 +80,54 @@ export function InputBox({ onSendMessage, onStopMessage, isLoading }: InputBoxPr
     }
   };
 
-  const toggleListening = () => {
-    if (!recognitionRef.current) {
-      alert('Tu navegador no soporta reconocimiento de voz. Usa Chrome o Edge.');
+  const toggleListening = async () => {
+    if (isTranscribing) return;
+
+    if (isRecording) {
+      recorderRef.current?.stop();
+      setIsRecording(false);
       return;
     }
 
-    if (isListening) {
-      recognitionRef.current.stop();
-      setIsListening(false);
-    } else {
-      if (window.speechSynthesis?.speaking) {
-        alert('Espera a que Calili termine de hablar antes de activar el micrófono.');
-        return;
-      }
-      recognitionRef.current.start();
-      setIsListening(true);
+    if (window.speechSynthesis?.speaking) {
+      alert('Espera a que Calili termine de hablar antes de activar el micrófono.');
+      return;
+    }
+
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const recorder = new MediaRecorder(stream);
+      chunksRef.current = [];
+      discardRef.current = false;
+      recorder.ondataavailable = (event) => {
+        if (event.data.size > 0) chunksRef.current.push(event.data);
+      };
+      recorder.onstop = async () => {
+        stream.getTracks().forEach((track) => track.stop());
+        if (discardRef.current) return;
+        const blob = new Blob(chunksRef.current, { type: recorder.mimeType || 'audio/webm' });
+        if (blob.size === 0) return;
+        setIsTranscribing(true);
+        try {
+          const formData = new FormData();
+          formData.append('audio', blob, 'dictado.webm');
+          const response = await fetch('/api/transcribe', { method: 'POST', body: formData });
+          const data = await response.json().catch(() => ({}));
+          if (!response.ok) throw new Error(data.error || 'No se pudo transcribir.');
+          if (data.text) {
+            setInput((prev) => (prev ? `${prev} ${data.text}` : data.text));
+          }
+        } catch (error) {
+          alert(error instanceof Error ? error.message : 'No se pudo transcribir el audio.');
+        } finally {
+          setIsTranscribing(false);
+        }
+      };
+      recorderRef.current = recorder;
+      recorder.start();
+      setIsRecording(true);
+    } catch {
+      alert('No se pudo acceder al micrófono. Revisa el permiso del navegador.');
     }
   };
 
@@ -162,14 +168,15 @@ export function InputBox({ onSendMessage, onStopMessage, isLoading }: InputBoxPr
           {/* Botón de voz */}
           <button
             onClick={toggleListening}
+            disabled={isTranscribing}
             className={`p-2 rounded-xl transition-all flex-shrink-0 ${
-              isListening
+              isRecording
                 ? 'bg-red-500 text-white animate-pulse'
                 : 'hover:bg-white/10 text-white/60'
             }`}
-            title="Hablar con Calili"
+            title={isTranscribing ? 'Transcribiendo…' : 'Dictar con tu voz (Whisper)'}
           >
-            {isListening ? (
+            {isRecording ? (
               <MicOff className="w-5 h-5" />
             ) : (
               <Mic className="w-5 h-5" />

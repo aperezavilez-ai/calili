@@ -27,7 +27,8 @@ export interface NexusProvider {
 
 export class NexusConfigError extends Error {}
 
-const GROQ_BASE_URL = 'https://api.groq.com/openai/v1';
+const GROQ_BASE_URL = process.env.GROQ_BASE_URL || 'https://api.groq.com/openai/v1';
+export const VISION_MODEL = process.env.VISION_MODEL || 'meta-llama/llama-4-scout-17b-16e-instruct';
 export const DEFAULT_NEXUS_MODEL = 'openai/gpt-oss-120b';
 const FIRST_TOKEN_TIMEOUT_MS = 20000;
 
@@ -157,4 +158,120 @@ export async function* streamNexusChat(
   }
 
   throw lastError instanceof Error ? lastError : new Error('NEXUS no respondió.');
+}
+
+// ---------------------------------------------------------------------------
+// Fase 3: herramientas y visión (solo Groq: el proveedor local no las tiene)
+// ---------------------------------------------------------------------------
+
+export interface NexusToolCall {
+  id: string;
+  type: 'function';
+  function: { name: string; arguments: string };
+}
+
+export interface NexusCompletion {
+  content: string;
+  toolCalls: NexusToolCall[];
+}
+
+function groqProvider(): NexusProvider {
+  const providers = resolveProviders();
+  const groq = providers.find((p) => p.id === 'groq');
+  if (!groq) {
+    throw new NexusConfigError(
+      'Esta función requiere el motor en Groq: falta GROQ_API_KEY. Revisa tu archivo .env.',
+    );
+  }
+  return groq;
+}
+
+// Llamada sin streaming con herramientas (function calling). Devuelve el
+// contenido o las llamadas a herramientas que el modelo decidió hacer.
+export async function completeWithTools(
+  messages: unknown[],
+  tools: unknown[],
+  signal?: AbortSignal,
+): Promise<NexusCompletion> {
+  const provider = groqProvider();
+  const response = await fetch(`${provider.baseUrl}/chat/completions`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${provider.apiKey}`,
+    },
+    body: JSON.stringify({
+      model: provider.model,
+      messages,
+      tools,
+      tool_choice: 'auto',
+      stream: false,
+      max_completion_tokens: 4096,
+    }),
+    signal,
+  });
+
+  if (!response.ok) {
+    const detail = await response.text().catch(() => '');
+    throw new Error(`El motor NEXUS (groq) respondió ${response.status}. ${detail.slice(0, 300)}`);
+  }
+
+  const data = await response.json();
+  const message = data.choices?.[0]?.message ?? {};
+  return {
+    content: typeof message.content === 'string' ? message.content : '',
+    toolCalls: Array.isArray(message.tool_calls) ? message.tool_calls : [],
+  };
+}
+
+// Streaming desde el modelo de visión (Llama 4 Scout en Groq). Los mensajes
+// llevan partes de texto e imagen (image_url con data: en base64).
+export async function* streamVisionChat(
+  messages: unknown[],
+  signal?: AbortSignal,
+): AsyncGenerator<string> {
+  const provider = groqProvider();
+  const response = await fetch(`${provider.baseUrl}/chat/completions`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${provider.apiKey}`,
+    },
+    body: JSON.stringify({
+      model: VISION_MODEL,
+      messages,
+      stream: true,
+      max_completion_tokens: 2048,
+    }),
+    signal,
+  });
+
+  if (!response.ok || !response.body) {
+    const detail = await response.text().catch(() => '');
+    throw new Error(`El modelo de visión respondió ${response.status}. ${detail.slice(0, 300)}`);
+  }
+
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = '';
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    const lines = buffer.split('\n');
+    buffer = lines.pop() || '';
+    for (const line of lines) {
+      const trimmed = line.trim();
+      if (!trimmed.startsWith('data:')) continue;
+      const data = trimmed.slice(5).trim();
+      if (data === '[DONE]') return;
+      try {
+        const parsed = JSON.parse(data);
+        const content = parsed.choices?.[0]?.delta?.content;
+        if (typeof content === 'string' && content) yield content;
+      } catch {
+        // Línea parcial o de control: se ignora.
+      }
+    }
+  }
 }

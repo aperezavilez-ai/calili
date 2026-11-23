@@ -2,7 +2,7 @@
 
 import { useChatStore } from '@/store/chat-store';
 import { useSettingsStore } from '@/store/settings-store';
-import { MessageSquarePlus, Trash2, Edit2, Check, X, Menu, Settings, Download } from 'lucide-react';
+import { MessageSquarePlus, Trash2, Edit2, Check, X, Menu, Settings, Download, LogOut } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { format } from 'date-fns';
 import { es } from 'date-fns/locale';
@@ -41,7 +41,7 @@ function usePwaInstall() {
   return { canInstall: Boolean(installEvent), install };
 }
 
-export function Sidebar() {
+export function Sidebar({ userEmail, onSignOut }: { userEmail?: string; onSignOut?: () => void }) {
   const {
     conversations,
     currentConversationId,
@@ -290,6 +290,18 @@ export function Sidebar() {
 
       {/* Footer */}
       <div className="p-4 border-t border-white/10">
+        {userEmail && (
+          <div className="mb-3 flex items-center justify-between gap-2">
+            <span className="truncate text-xs text-white/60" title={userEmail}>{userEmail}</span>
+            <button
+              onClick={onSignOut}
+              className="flex shrink-0 items-center gap-1 rounded-md px-2 py-1 text-xs text-white/70 hover:bg-white/10 hover:text-white"
+              title="Cerrar sesión"
+            >
+              <LogOut className="h-3.5 w-3.5" /> Salir
+            </button>
+          </div>
+        )}
         <div className="text-xs text-white/40 text-center">
           <p className="font-semibold mb-1">Calili AI</p>
           <p>Tu asistente personal</p>

@@ -1,5 +1,11 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
+import {
+  insertConversation,
+  insertMessage,
+  updateConversationTitleDb,
+  deleteConversationDb,
+} from '@/lib/chat-db';
 
 export interface Message {
   id: string;
@@ -22,6 +28,9 @@ interface ChatStore {
   isLoading: boolean;
   isDarkMode: boolean;
   isSidebarOpen: boolean;
+  // Usuario de Supabase con sesión activa; si hay uno, el store sincroniza
+  // cada cambio contra la base de datos. Sin sesión, todo queda local.
+  dbUserId: string | null;
 
   // Actions
   createConversation: () => string;
@@ -33,6 +42,14 @@ interface ChatStore {
   toggleDarkMode: () => void;
   toggleSidebar: () => void;
   clearAllConversations: () => void;
+  setDbUser: (userId: string | null) => void;
+  replaceConversations: (conversations: Conversation[]) => void;
+}
+
+// La sincronización nunca bloquea la interfaz: si la red falla, el dato
+// ya quedó en el respaldo local y el error solo se registra en consola.
+function sync(promise: Promise<void>) {
+  promise.catch((error) => console.error('Calili: error de sincronización', error));
 }
 
 export const useChatStore = create<ChatStore>()(
@@ -43,6 +60,7 @@ export const useChatStore = create<ChatStore>()(
       isLoading: false,
       isDarkMode: true,
       isSidebarOpen: true,
+      dbUserId: null,
 
       createConversation: () => {
         const id = crypto.randomUUID();
@@ -60,6 +78,9 @@ export const useChatStore = create<ChatStore>()(
           currentConversationId: id,
         }));
 
+        const { dbUserId } = get();
+        if (dbUserId) sync(insertConversation(dbUserId, newConversation));
+
         return id;
       },
 
@@ -76,6 +97,8 @@ export const useChatStore = create<ChatStore>()(
             currentConversationId: newCurrentId,
           };
         });
+
+        if (get().dbUserId) sync(deleteConversationDb(id));
       },
 
       setCurrentConversation: (id) => {
@@ -88,6 +111,8 @@ export const useChatStore = create<ChatStore>()(
           id: crypto.randomUUID(),
           timestamp: Date.now(),
         };
+
+        const previousTitle = get().conversations.find((c) => c.id === conversationId)?.title;
 
         set((state) => ({
           conversations: state.conversations.map((conv) => {
@@ -110,6 +135,14 @@ export const useChatStore = create<ChatStore>()(
             return conv;
           }),
         }));
+
+        if (get().dbUserId) {
+          sync(insertMessage(conversationId, newMessage));
+          const newTitle = get().conversations.find((c) => c.id === conversationId)?.title;
+          if (newTitle && previousTitle && newTitle !== previousTitle) {
+            sync(updateConversationTitleDb(conversationId, newTitle));
+          }
+        }
       },
 
       updateConversationTitle: (id, title) => {
@@ -118,6 +151,8 @@ export const useChatStore = create<ChatStore>()(
             conv.id === id ? { ...conv, title, updatedAt: Date.now() } : conv
           ),
         }));
+
+        if (get().dbUserId) sync(updateConversationTitleDb(id, title));
       },
 
       setLoading: (loading) => {
@@ -138,9 +173,30 @@ export const useChatStore = create<ChatStore>()(
           currentConversationId: null,
         });
       },
+
+      setDbUser: (userId) => {
+        set({ dbUserId: userId });
+      },
+
+      replaceConversations: (conversations) => {
+        set((state) => ({
+          conversations,
+          currentConversationId:
+            state.currentConversationId && conversations.some((c) => c.id === state.currentConversationId)
+              ? state.currentConversationId
+              : conversations[0]?.id || null,
+        }));
+      },
     }),
     {
       name: 'calili-chat-storage',
+      // Solo se persiste el respaldo local; la sesión y la carga no.
+      partialize: (state) => ({
+        conversations: state.conversations,
+        currentConversationId: state.currentConversationId,
+        isDarkMode: state.isDarkMode,
+        isSidebarOpen: state.isSidebarOpen,
+      }),
       // Un request interrumpido no debe reabrir la app con el boton bloqueado.
       merge: (persistedState, currentState) => ({
         ...currentState,
