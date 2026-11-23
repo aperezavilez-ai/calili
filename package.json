@@ -1,13 +1,14 @@
 {
   "name": "calili",
-  "version": "1.0.0",
+  "version": "2.0.0",
   "description": "Calili - Clone de ChatGPT como PWA para iOS y Android",
   "private": true,
   "scripts": {
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "next lint"
+    "lint": "next lint",
+    "smoke:nexus": "node scripts/smoke-nexus.mjs"
   },
   "dependencies": {
     "@supabase/auth-helpers-nextjs": "^0.10.0",

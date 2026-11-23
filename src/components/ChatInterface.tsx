@@ -20,7 +20,7 @@ export default function ChatInterface() {
     toggleSidebar,
   } = useChatStore();
 
-  const { voiceEnabled, voiceGender, imageSize } = useSettingsStore();
+  const { voiceEnabled, voiceGender } = useSettingsStore();
   const [streamingContent, setStreamingContent] = useState('');
   const activeRequestControllerRef = useRef<AbortController | null>(null);
   const cancelRequestedRef = useRef(false);
@@ -42,13 +42,6 @@ export default function ChatInterface() {
   const speakResponse = (text: string) => {
     if (voiceEnabled) voiceService.speak(text, voiceGender);
   };
-
-  const readImageAsDataUrl = (file: File) => new Promise<string>((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => resolve(String(reader.result));
-    reader.onerror = () => reject(new Error(`No se pudo leer ${file.name}.`));
-    reader.readAsDataURL(file);
-  });
 
   const downloadGeneratedFile = async (content: string, format: 'md' | 'pdf' | 'docx') => {
     const response = await fetch('/api/export', {
@@ -82,12 +75,6 @@ export default function ChatInterface() {
     cancelRequestedRef.current = false;
 
     const normalizedIntent = content.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
-    const creativeAction = '(?:crea(?:r|me)?|genera(?:r|me)?|haz(?:me)?|hacer|dibuja(?:r|me)?|disena(?:r|me)?)';
-    const imageTarget = '(?:imagen|foto|dibujo|ilustracion|retrato|flyer|cartel|poster)';
-    const wantsImage = new RegExp(`\\b${creativeAction}\\b[\\s\\S]{0,100}\\b${imageTarget}\\b`).test(normalizedIntent) ||
-      new RegExp(`\\b${imageTarget}\\b[\\s\\S]{0,100}\\b${creativeAction}\\b`).test(normalizedIntent);
-    const wantsFlyer = /\\b(flyer|cartel|poster|p[oó]ster)\\b/i.test(content);
-    const wantsWeb = /\b(busca|buscar|internet|web|actual|hoy|noticias|noticia|precio|clima|cotizaci[oó]n|[uú]ltimas|reciente)\b/i.test(content);
     const wantsVoice = /\b(habla|hablando|voz|en voz alta|lee|leer)\b/i.test(content);
     const documentAction = '(?:crea(?:r|me)?|genera(?:r|me)?|haz(?:me)?|prepara(?:r|me)?|elabora(?:r|me)?|descarga(?:r|me)?)';
     const documentTarget = '(?:documento|archivo|informe|reporte|carta|curriculum|markdown|\\.md|\\.txt|pdf|word|docx)';
@@ -99,7 +86,6 @@ export default function ChatInterface() {
 
     try {
       let modelContent = content;
-      let imageData = '';
       if (files.length > 0) {
         const formData = new FormData();
         files.forEach((file) => formData.append('files', file));
@@ -112,35 +98,9 @@ export default function ChatInterface() {
         const extracted = (fileData.attachments ?? []) as Array<{ name: string; text?: string; analyzableImage?: boolean }>;
         const extractedText = extracted.filter((file) => file.text).map((file) => `--- ${file.name} ---\n${file.text}`).join('\n\n');
         if (extractedText) modelContent += `\n\nContenido extraído de los archivos:\n${extractedText}`;
-        const imageFile = files.find((file) => file.type.startsWith('image/') && file.size <= 3 * 1024 * 1024);
-        if (imageFile) imageData = await readImageAsDataUrl(imageFile);
       }
 
-      if (wantsImage) {
-        const response = await fetch('/api/image', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ prompt: content, size: imageSize, quality: 'hd', flyer: wantsFlyer }),
-        });
-
-        if (!response.ok) {
-          const err = await response.json().catch(() => ({}));
-          throw new Error(err.error || `Error ${response.status}`);
-        }
-
-        const data = await response.json();
-        const imageUrl = data.data?.[0]?.url;
-        const revisedPrompt = data.data?.[0]?.revised_prompt;
-
-        if (imageUrl) {
-          addMessage(convId, {
-            role: 'assistant',
-            content: `![Imagen generada](${imageUrl})\n\n*${revisedPrompt || content}*`,
-          });
-        } else {
-          throw new Error('No se pudo generar la imagen');
-        }
-      } else {
+      {
         const msgs = (currentConversation?.messages || []).map((m) => ({
           role: m.role,
           content: m.content,
@@ -149,35 +109,13 @@ export default function ChatInterface() {
         // Incluir el mensaje del usuario actual
         msgs.push({ role: 'user', content: modelContent });
 
-        let webContext = '';
-        if (wantsWeb) {
-          const searchController = new AbortController();
-          const searchTimeout = window.setTimeout(() => searchController.abort(), 3000);
-          try {
-            const searchResponse = await fetch('/api/search', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ query: content }),
-              signal: searchController.signal,
-            });
-            if (searchResponse.ok) {
-              const searchData = await searchResponse.json();
-              webContext = searchData.context || '';
-            }
-          } catch {
-            // La respuesta de Calili no debe quedar bloqueada por una búsqueda lenta.
-          } finally {
-            window.clearTimeout(searchTimeout);
-          }
-        }
-
         const chatController = new AbortController();
         activeRequestControllerRef.current = chatController;
-        requestTimeout = window.setTimeout(() => chatController.abort(), 25000);
+        requestTimeout = window.setTimeout(() => chatController.abort(), 120000);
         const response = await fetch('/api/chat', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ messages: msgs, webContext, wantsDocument, imageData }),
+          body: JSON.stringify({ messages: msgs, wantsDocument }),
           signal: chatController.signal,
         });
 
@@ -225,7 +163,7 @@ export default function ChatInterface() {
           if (wantsVoice || voiceEnabled) speakResponse(finalContent);
           if (wantsDocument) await downloadGeneratedFile(finalContent, requestedFormat);
         } else {
-          addMessage(convId, { role: 'assistant', content: '⚠️ La IA no devolvió contenido. Revisa la conexión del Gateway.' });
+          addMessage(convId, { role: 'assistant', content: '⚠️ NEXUS no devolvió contenido. Revisa la configuración del motor.' });
         }
         setStreamingContent('');
       }
