@@ -49,6 +49,7 @@ export default function VoiceMode({ onClose, onFile }: VoiceModeProps) {
   const turnDoneRef = useRef<(() => void) | null>(null);
   const speakCueRef = useRef(false);
   const factsRef = useRef<string[]>([]);
+  const lastReplyRef = useRef('');
 
   const stopTracks = useCallback(() => {
     cancelAnimationFrame(rafRef.current);
@@ -96,15 +97,25 @@ export default function VoiceMode({ onClose, onFile }: VoiceModeProps) {
       const blob = await item.audio;
       if (!openRef.current) break;
       if (blob) {
+        // Se reutiliza SIEMPRE el mismo elemento de audio, desbloqueado con
+        // el toque que abrio el modo voz: crear un Audio nuevo tras esperas
+        // largas de red hace que el navegador bloquee la reproduccion en
+        // silencio (la causa de que "no se escuchara" la voz).
         const url = URL.createObjectURL(blob);
-        await new Promise<void>((resolve) => {
-          const audio = new Audio(url);
+        const played = await new Promise<boolean>((resolve) => {
+          const audio = audioRef.current ?? new Audio();
           audioRef.current = audio;
-          cancelPlayRef.current = () => { audio.pause(); URL.revokeObjectURL(url); resolve(); };
-          audio.onended = () => { cancelPlayRef.current = null; URL.revokeObjectURL(url); resolve(); };
-          audio.onerror = () => { cancelPlayRef.current = null; URL.revokeObjectURL(url); resolve(); };
-          void audio.play().catch(() => resolve());
+          cancelPlayRef.current = () => { audio.pause(); URL.revokeObjectURL(url); resolve(true); };
+          audio.onended = () => { cancelPlayRef.current = null; URL.revokeObjectURL(url); resolve(true); };
+          audio.onerror = () => { cancelPlayRef.current = null; URL.revokeObjectURL(url); resolve(false); };
+          audio.src = url;
+          audio.play().then(() => undefined).catch(() => resolve(false));
         });
+        if (!played && openRef.current && !mutedRef.current) {
+          // Si aun asi el navegador bloquea el audio, la voz del navegador
+          // suena en su lugar: nunca quedarse mudo en silencio.
+          await speakWithBrowser(item.text);
+        }
       } else {
         await speakWithBrowser(item.text);
       }
@@ -201,6 +212,7 @@ export default function VoiceMode({ onClose, onFile }: VoiceModeProps) {
     if (remainder) enqueueSentence(remainder);
     const reply = normalizeCaliliResponse(full.trim());
     if (!reply) throw new Error('respuesta vacia');
+    lastReplyRef.current = reply;
     useChatStore.getState().addMessage(conversationId, { role: 'assistant', content: reply });
     return reply;
   }, [enqueueSentence, onFile]);
@@ -209,7 +221,9 @@ export default function VoiceMode({ onClose, onFile }: VoiceModeProps) {
     if (!openRef.current || mutedRef.current) return;
     setPhase('listening');
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
+      });
       if (!openRef.current) { stream.getTracks().forEach((t) => t.stop()); return; }
       streamRef.current = stream;
       const recorder = new MediaRecorder(stream);
@@ -224,6 +238,7 @@ export default function VoiceMode({ onClose, onFile }: VoiceModeProps) {
       const data = new Uint8Array(analyser.fftSize);
       let heardSpeech = false;
       let silenceSince = 0;
+      let peakRms = 0;
       const startedAt = Date.now();
 
       const tick = () => {
@@ -234,6 +249,11 @@ export default function VoiceMode({ onClose, onFile }: VoiceModeProps) {
         const rms = Math.sqrt(sum / data.length);
         setLevel(Math.min(1, rms * 4));
         const now = Date.now();
+        if (rms > peakRms) peakRms = rms;
+        // Ventana de gracia: los primeros 400 ms (el sonido de escucha y la
+        // cola de eco de la respuesta anterior en la bocina) no cuentan
+        // como voz; esa era la puerta de las transcripciones fantasma.
+        if (now - startedAt < 400) { rafRef.current = requestAnimationFrame(tick); return; }
         if (rms > 0.025) { heardSpeech = true; silenceSince = 0; }
         else if (heardSpeech) { if (!silenceSince) silenceSince = now; }
         const silenceLong = heardSpeech && silenceSince > 0 && now - silenceSince > 800;
@@ -258,6 +278,10 @@ export default function VoiceMode({ onClose, onFile }: VoiceModeProps) {
       if (!openRef.current || mutedRef.current) return;
 
       if (!heardSpeech || chunks.length === 0) { void listenOnce(); return; }
+      // Puerta de energia: si todo lo grabado fue bajito (ruido de cuarto,
+      // television lejana), no se manda a transcribir: Whisper inventa
+      // frases sobre ruido, y esas eran las "preguntas que yo no hice".
+      if (peakRms < 0.05) { void listenOnce(); return; }
 
       setPhase('thinking');
       const form = new FormData();
@@ -267,6 +291,18 @@ export default function VoiceMode({ onClose, onFile }: VoiceModeProps) {
       const userText = String(tdata?.text || '').trim();
       if (!userText) { void listenOnce(); return; }
       if (mutedRef.current) return;
+      // Guardia anti-eco: si lo "escuchado" es en realidad la voz de
+      // Calili rebotando de la bocina al microfono (su respuesta anterior
+      // o un fragmento largo de ella), se descarta y se vuelve a escuchar.
+      {
+        const clean = (value: string) => value.toLowerCase().replace(/[^a-záéíóúñ0-9\s]/gi, ' ').replace(/\s+/g, ' ').trim();
+        const heardClean = clean(userText);
+        const replyClean = clean(lastReplyRef.current);
+        if (heardClean.length >= 12 && replyClean && (replyClean.includes(heardClean) || heardClean.includes(replyClean.slice(0, 40)))) {
+          void listenOnce();
+          return;
+        }
+      }
 
       streamDoneRef.current = false;
       speakCueRef.current = false;
@@ -292,6 +328,15 @@ export default function VoiceMode({ onClose, onFile }: VoiceModeProps) {
 
   useEffect(() => {
     openRef.current = true;
+    // Desbloqueo de audio: este efecto corre justo tras el toque del
+    // usuario en el boton del microfono; reproducir un silencio aqui deja
+    // el elemento autorizado a sonar el resto de la sesion.
+    if (!audioRef.current) {
+      const unlock = new Audio('data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEAQB8AAIA+AAACABAAZGF0YQAAAAA=');
+      unlock.volume = 0;
+      audioRef.current = unlock;
+      void unlock.play().catch(() => undefined);
+    }
     playEarcon('connect');
     void loadMemoryFacts(useChatStore.getState().dbUserId)
       .then((facts) => { factsRef.current = facts; })

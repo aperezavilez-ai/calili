@@ -38,7 +38,7 @@ export async function POST(req: NextRequest) {
     upstream.append('file', audio, 'dictado.webm');
     upstream.append('model', WHISPER_MODEL);
     upstream.append('language', 'es');
-    upstream.append('response_format', 'json');
+    upstream.append('response_format', 'verbose_json');
 
     const response = await fetch(`${GROQ_BASE_URL}/audio/transcriptions`, {
       method: 'POST',
@@ -55,6 +55,19 @@ export async function POST(req: NextRequest) {
     }
 
     const data = await response.json();
+    // Anti-alucinacion: Whisper inventa frases (a veces preguntas enteras)
+    // cuando el audio es silencio o ruido. verbose_json trae la
+    // probabilidad de "no hay voz" por segmento: se descartan los
+    // segmentos dudosos y, si todo era ruido, no se devuelve texto.
+    const segments = Array.isArray(data?.segments) ? data.segments : null;
+    if (segments) {
+      const kept = segments
+        .filter((seg: { no_speech_prob?: number }) => typeof seg?.no_speech_prob !== 'number' || seg.no_speech_prob <= 0.6)
+        .map((seg: { text?: string }) => String(seg?.text ?? ''))
+        .join('')
+        .trim();
+      return NextResponse.json({ text: kept });
+    }
     return NextResponse.json({ text: typeof data.text === 'string' ? data.text.trim() : '' });
   } catch {
     return NextResponse.json({ error: 'No se pudo transcribir el audio.' }, { status: 500 });
