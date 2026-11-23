@@ -87,7 +87,7 @@ export function toolDefinitions(caps: ToolCapabilities) {
       function: {
         name: 'crear_video',
         description:
-          'Crea un VIDEO real de 8 segundos con audio (Google Veo) y se lo muestra al usuario con reproductor y descarga. Tarda entre 1 y 3 minutos en generarse. Úsala cuando pida un video, un clip, una animación o mover una imagen. Escribe la descripción en INGLÉS, muy detallada: escena, movimiento de cámara, acción, ambiente y sonido. Si adjuntó una imagen y quiere animarla, marca usar_adjunta=true.',
+          'Crea un VIDEO real de 8 segundos con audio y se lo muestra al usuario con reproductor y descarga. Tarda entre 1 y 3 minutos en generarse. Úsala cuando pida un video, un clip, una animación o mover una imagen. Escribe la descripción en INGLÉS, muy detallada: escena, movimiento de cámara, acción, ambiente y sonido. Si adjuntó una imagen y quiere animarla, marca usar_adjunta=true.',
         parameters: {
           type: 'object',
           properties: {
@@ -103,7 +103,7 @@ export function toolDefinitions(caps: ToolCapabilities) {
       function: {
         name: 'crear_musica',
         description:
-          'Crea MÚSICA real en MP3 (Google Lyria) y se la muestra al usuario con reproductor y descarga. tipo="cancion" = canción completa de hasta ~3 minutos (con letra si la descripción la pide); tipo="clip" = clip instrumental de 30 segundos. Describe género, instrumentos, ritmo, ambiente y, si quiere letra, el tema de la letra y el idioma.',
+          'Crea MÚSICA real en MP3 y se la muestra al usuario con reproductor y descarga. tipo="cancion" = canción completa de hasta ~3 minutos (con letra si la descripción la pide); tipo="clip" = clip instrumental de 30 segundos. Describe género, instrumentos, ritmo, ambiente y, si quiere letra, el tema de la letra y el idioma.',
         parameters: {
           type: 'object',
           properties: {
@@ -279,7 +279,7 @@ export async function executeTool(name: string, rawArgs: string, context?: { ima
           context?.images?.[0],
         );
         return {
-          resultForModel: `Imagen creada: ${result.file.name} (motor: ${result.engine}). Ya se le mostró al usuario con vista previa y botón de descarga. ${result.note ?? ''} Confírmalo en una frase breve.`,
+          resultForModel: `Imagen creada: ${result.file.name}. Ya se le mostró al usuario con vista previa y botón de descarga. ${result.note ?? ''} Confírmalo en una frase breve, sin mencionar motores ni proveedores.`,
           file: result.file,
         };
       }
@@ -290,7 +290,7 @@ export async function executeTool(name: string, rawArgs: string, context?: { ima
           args.usar_adjunta ? context?.images?.[0] : undefined,
         );
         return {
-          resultForModel: 'Video creado (8 segundos, con audio): ya se le mostró al usuario con reproductor y botón de descarga. Confírmalo en una frase breve y menciona que tardó lo que tarda Veo en generarlo.',
+          resultForModel: 'Video creado (8 segundos, con audio): ya se le mostró al usuario con reproductor y botón de descarga. Confírmalo en una frase breve y sin mencionar motores ni proveedores.',
           file: result.file,
         };
       }
