@@ -1,15 +1,16 @@
 'use client';
 
 import { useState, useRef, useEffect } from 'react';
-import { Send, Mic, MicOff, Square, Paperclip, X } from 'lucide-react';
+import { Send, Mic, MicOff, Square, Paperclip, X, AudioWaveform } from 'lucide-react';
 
 interface InputBoxProps {
   onSendMessage: (message: string, files: File[]) => void;
   onStopMessage: () => void;
   isLoading: boolean;
+  onVoiceMode?: () => void;
 }
 
-export function InputBox({ onSendMessage, onStopMessage, isLoading }: InputBoxProps) {
+export function InputBox({ onSendMessage, onStopMessage, isLoading, onVoiceMode }: InputBoxProps) {
   const [input, setInput] = useState('');
   const [isRecording, setIsRecording] = useState(false);
   const [isTranscribing, setIsTranscribing] = useState(false);
@@ -181,6 +182,16 @@ export function InputBox({ onSendMessage, onStopMessage, isLoading }: InputBoxPr
             ) : (
               <Mic className="w-5 h-5" />
             )}
+          </button>
+
+          {/* Botón modo voz (orbe) */}
+          <button
+            type="button"
+            onClick={() => onVoiceMode?.()}
+            className="p-2 rounded-xl transition-all flex-shrink-0 hover:bg-white/10 text-white/60 hover:text-white"
+            title="Modo voz: conversa con Calili hablando"
+          >
+            <AudioWaveform className="w-5 h-5" />
           </button>
 
           {/* Botón enviar */}

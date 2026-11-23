@@ -10,6 +10,8 @@ import { voiceService } from '@/lib/voice-service';
 import { supabase, isSupabaseConfigured } from '@/lib/supabase';
 import { fetchConversations, uploadLocalConversation } from '@/lib/chat-db';
 import { AuthScreen } from '@/components/AuthScreen';
+import VoiceMode from '@/components/VoiceMode';
+import { normalizeCaliliResponse } from '@/lib/response-policy';
 import { Download } from 'lucide-react';
 
 export default function ChatInterface() {
@@ -33,12 +35,9 @@ export default function ChatInterface() {
   const { voiceEnabled, voiceGender } = useSettingsStore();
   const [streamingContent, setStreamingContent] = useState('');
   const [generatedFiles, setGeneratedFiles] = useState<Array<{ id: string; name: string; mime: string; base64: string }>>([]);
+  const [voiceModeOpen, setVoiceModeOpen] = useState(false);
   const activeRequestControllerRef = useRef<AbortController | null>(null);
   const cancelRequestedRef = useRef(false);
-
-  const normalizeCaliliResponse = (text: string) => text
-    .replace(/\b(?:soy|eres)\s+(?:un\s+)?(?:asistente\s+)?(?:basado|impulsado)\s+en\s+(?:GPT(?:-?5(?:\.5)?)?|ChatGPT)\b[^.?!]*(?:[.?!]|$)/gi, 'Soy Calili, tu asistente virtual.')
-    .replace(/\b(?:GPT(?:-?5(?:\.5)?)?|ChatGPT|ME\.AI|APICredits)\b/gi, 'Calili');
 
   const currentConversation = conversations.find((c) => c.id === currentConversationId);
 
@@ -324,8 +323,14 @@ export default function ChatInterface() {
             </div>
           </div>
         )}
-        <InputBox onSendMessage={handleSendMessage} onStopMessage={stopResponse} isLoading={isLoading} />
+        <InputBox onSendMessage={handleSendMessage} onStopMessage={stopResponse} isLoading={isLoading} onVoiceMode={() => setVoiceModeOpen(true)} />
       </main>
+      {voiceModeOpen && (
+        <VoiceMode
+          onClose={() => setVoiceModeOpen(false)}
+          onFile={(file) => setGeneratedFiles((current) => [...current, file])}
+        />
+      )}
     </div>
   );
 }

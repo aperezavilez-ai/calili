@@ -86,3 +86,9 @@ Motivo (juicio de Luis, 2026-11-23): las respuestas salían de miles de palabras
 ### Honestidad de alcance
 - **Generación de imágenes: no incluida.** Groq no ofrece generación de imágenes; meterla exige otro proveedor con su clave. Calili ya no la finge: si la pides, lo dice y ofrece alternativas (p. ej. crear el archivo del diseño en Word/PDF).
 - Memoria de largo plazo y proyectos/asistentes quedan para la Fase 4.
+
+## v2.3.0 — Modo Voz (orbe)
+- Botón de ondas junto al micrófono en InputBox abre el Modo Voz a pantalla completa: orbe de colores con movimiento (respira en reposo, late con el nivel de tu voz al escuchar, gira al pensar, brilla al hablar).
+- Bucle conversacional manos libres: escucha (Whisper, corte automático tras 1,4 s de silencio) → responde NEXUS → habla → vuelve a escuchar. La conversación también queda escrita en el chat y se guarda igual.
+- Voz de Calili: ruta /api/speak con la voz neural femenina es-MX Dalia (servicio de voz de Microsoft vía msedge-tts, sin clave ni costo). Si ese servicio fallara, la app cae automáticamente a la voz del navegador. Variable opcional CALILI_VOICE para cambiar la voz.
+- La función normalizeCaliliResponse se movió a src/lib/response-policy.ts (compartida por chat y modo voz).
