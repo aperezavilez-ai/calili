@@ -2,11 +2,13 @@
 
 import { useState } from 'react';
 import { supabase } from '@/lib/supabase';
+import { Eye, EyeOff } from 'lucide-react';
 
 export function AuthScreen() {
   const [mode, setMode] = useState<'login' | 'register'>('login');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
@@ -58,15 +60,26 @@ export function AuthScreen() {
             placeholder="Correo electrónico"
             className="w-full rounded-xl border border-white/15 bg-white/5 px-4 py-3 outline-none placeholder:text-white/40 focus:border-white/40"
           />
-          <input
-            type="password"
-            required
-            minLength={6}
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-            placeholder="Contraseña (mínimo 6 caracteres)"
-            className="w-full rounded-xl border border-white/15 bg-white/5 px-4 py-3 outline-none placeholder:text-white/40 focus:border-white/40"
-          />
+          <div className="relative">
+            <input
+              type={showPassword ? 'text' : 'password'}
+              required
+              minLength={6}
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              placeholder="Contraseña (mínimo 6 caracteres)"
+              className="w-full rounded-xl border border-white/15 bg-white/5 px-4 py-3 pr-12 outline-none placeholder:text-white/40 focus:border-white/40"
+            />
+            <button
+              type="button"
+              onClick={() => setShowPassword((current) => !current)}
+              className="absolute right-3 top-1/2 -translate-y-1/2 text-white/50 hover:text-white"
+              title={showPassword ? 'Ocultar contraseña' : 'Ver contraseña'}
+              aria-label={showPassword ? 'Ocultar contraseña' : 'Ver contraseña'}
+            >
+              {showPassword ? <EyeOff className="h-5 w-5" /> : <Eye className="h-5 w-5" />}
+            </button>
+          </div>
           {error && <p className="rounded-lg bg-red-500/15 px-3 py-2 text-sm text-red-300">{error}</p>}
           {notice && <p className="rounded-lg bg-emerald-500/15 px-3 py-2 text-sm text-emerald-300">{notice}</p>}
           <button
