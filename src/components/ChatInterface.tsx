@@ -29,6 +29,8 @@ export default function ChatInterface() {
     setDbUser,
     replaceConversations,
     clearAllConversations,
+    removeMessage,
+    truncateConversation,
   } = useChatStore();
 
   const [authStatus, setAuthStatus] = useState<'checking' | 'local' | 'signedOut' | 'signedIn'>('checking');
@@ -165,6 +167,83 @@ export default function ChatInterface() {
     if (voiceEnabled) voiceService.speak(text, voiceGender);
   };
 
+  // Una pasada completa contra /api/chat: transmite, aplica eventos de
+  // archivo y memoria, y devuelve el texto acumulado. La usan el envio
+  // normal, la regeneracion y la edicion de mensajes.
+  const streamReply = async (
+    msgs: Array<{ role: string; content: string }>,
+    imageDataUrls: string[],
+  ): Promise<string> => {
+    const chatController = new AbortController();
+    activeRequestControllerRef.current = chatController;
+    const timeout = window.setTimeout(() => chatController.abort(), 120000);
+    try {
+      const response = await fetch('/api/chat', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ messages: msgs, images: imageDataUrls, memory: memoryFacts }),
+        signal: chatController.signal,
+      });
+
+      if (!response.ok) {
+        const err = await response.json().catch(() => ({}));
+        throw new Error(err.error || `Error ${response.status}`);
+      }
+
+      const reader = response.body?.getReader();
+      if (!reader) throw new Error('No se pudo leer la respuesta');
+
+      const decoder = new TextDecoder();
+      let accumulatedContent = '';
+      let buffer = '';
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split('\n');
+        buffer = lines.pop() || '';
+
+        for (const line of lines) {
+          if (line.startsWith('data: ')) {
+            const data = line.slice(6).trim();
+            if (data === '[DONE]') continue;
+            try {
+              const parsed = JSON.parse(data);
+              if (parsed.error) throw new Error(parsed.error);
+              if (parsed.file) {
+                setGeneratedFiles((prev) => [
+                  ...prev,
+                  { id: `${Date.now()}-${prev.length}`, name: parsed.file.name, mime: parsed.file.mime, base64: parsed.file.base64 },
+                ]);
+              }
+              if (parsed.memory) {
+                const userId = useChatStore.getState().dbUserId;
+                if (parsed.memory.action === 'add') {
+                  void saveMemoryFact(userId, String(parsed.memory.fact || '')).then(setMemoryFacts).catch(() => undefined);
+                } else {
+                  void removeMemoryFact(userId, String(parsed.memory.fact || '')).then(setMemoryFacts).catch(() => undefined);
+                }
+              }
+              if (parsed.content) {
+                accumulatedContent += parsed.content;
+                setStreamingContent(normalizeCaliliResponse(accumulatedContent));
+              }
+            } catch (parseError) {
+              if (parseError instanceof Error && parseError.message) throw parseError;
+            }
+          }
+        }
+      }
+
+      return accumulatedContent;
+    } finally {
+      window.clearTimeout(timeout);
+      activeRequestControllerRef.current = null;
+    }
+  };
+
   const handleSendMessage = async (content: string, files: File[] = []) => {
     voiceService.stop();
     let convId = currentConversationId;
@@ -181,7 +260,6 @@ export default function ChatInterface() {
     cancelRequestedRef.current = false;
 
     const wantsVoice = /\b(habla|hablando|voz|en voz alta|lee|leer)\b/i.test(content);
-    let requestTimeout: number | null = null;
 
     try {
       let modelContent = content;
@@ -213,82 +291,24 @@ export default function ChatInterface() {
       }
 
       {
-        const msgs = (currentConversation?.messages || []).map((m) => ({
-          role: m.role,
-          content: m.content,
-        }));
+        // Mensajes frescos del store (ya incluyen el que se acaba de
+        // agregar); el ultimo del usuario lleva el contenido enriquecido
+        // con el texto extraido de los archivos.
+        const fresh = useChatStore.getState().conversations.find((c) => c.id === convId);
+        const msgs = (fresh?.messages || []).map((m) => ({ role: m.role, content: m.content }));
+        let lastUserIdx = -1;
+        msgs.forEach((m, i) => { if (m.role === 'user') lastUserIdx = i; });
+        if (lastUserIdx >= 0) msgs[lastUserIdx] = { role: 'user', content: modelContent };
+        else msgs.push({ role: 'user', content: modelContent });
 
-        // Incluir el mensaje del usuario actual
-        msgs.push({ role: 'user', content: modelContent });
-
-        const chatController = new AbortController();
-        activeRequestControllerRef.current = chatController;
-        requestTimeout = window.setTimeout(() => chatController.abort(), 120000);
-        const response = await fetch('/api/chat', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ messages: msgs, images: imageDataUrls, memory: memoryFacts }),
-          signal: chatController.signal,
-        });
-
-        if (!response.ok) {
-          const err = await response.json().catch(() => ({}));
-          throw new Error(err.error || `Error ${response.status}`);
-        }
-
-        const reader = response.body?.getReader();
-        if (!reader) throw new Error('No se pudo leer la respuesta');
-
-        const decoder = new TextDecoder();
-        let accumulatedContent = '';
-        let buffer = '';
-
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) break;
-
-          buffer += decoder.decode(value, { stream: true });
-          const lines = buffer.split('\n');
-          buffer = lines.pop() || '';
-
-          for (const line of lines) {
-            if (line.startsWith('data: ')) {
-              const data = line.slice(6).trim();
-              if (data === '[DONE]') continue;
-              try {
-                const parsed = JSON.parse(data);
-                if (parsed.error) throw new Error(parsed.error);
-                if (parsed.file) {
-                  setGeneratedFiles((prev) => [
-                    ...prev,
-                    { id: `${Date.now()}-${prev.length}`, name: parsed.file.name, mime: parsed.file.mime, base64: parsed.file.base64 },
-                  ]);
-                }
-                if (parsed.memory) {
-                  const userId = useChatStore.getState().dbUserId;
-                  if (parsed.memory.action === 'add') {
-                    void saveMemoryFact(userId, String(parsed.memory.fact || '')).then(setMemoryFacts).catch(() => undefined);
-                  } else {
-                    void removeMemoryFact(userId, String(parsed.memory.fact || '')).then(setMemoryFacts).catch(() => undefined);
-                  }
-                }
-                if (parsed.content) {
-                  accumulatedContent += parsed.content;
-                  setStreamingContent(normalizeCaliliResponse(accumulatedContent));
-                }
-              } catch (parseError) {
-                if (parseError instanceof Error && parseError.message) throw parseError;
-              }
-            }
-          }
-        }
+        const accumulatedContent = await streamReply(msgs, imageDataUrls);
 
         if (accumulatedContent) {
           const finalContent = normalizeCaliliResponse(accumulatedContent);
           addMessage(convId, { role: 'assistant', content: finalContent });
           if (wantsVoice || voiceEnabled) speakResponse(finalContent);
         } else {
-          addMessage(convId, { role: 'assistant', content: '⚠️ NEXUS no devolvió contenido. Revisa la configuración del motor.' });
+          addMessage(convId, { role: 'assistant', content: '⚠️ NEXUS no devolvio contenido. Revisa la configuracion del motor.' });
         }
         setStreamingContent('');
       }
@@ -308,10 +328,51 @@ export default function ChatInterface() {
         });
       }
     } finally {
-      if (requestTimeout !== null) window.clearTimeout(requestTimeout);
-      activeRequestControllerRef.current = null;
       setLoading(false);
     }
+  };
+
+  // Regenerar: borra la ultima respuesta y la vuelve a producir con el
+  // mismo historial, como en ChatGPT.
+  const handleRegenerate = async () => {
+    if (isLoading || !currentConversationId) return;
+    const conv = useChatStore.getState().conversations.find((c) => c.id === currentConversationId);
+    if (!conv) return;
+    const lastAssistant = [...conv.messages].reverse().find((m) => m.role === 'assistant');
+    if (!lastAssistant) return;
+    const msgs = conv.messages
+      .filter((m) => m.id !== lastAssistant.id)
+      .map((m) => ({ role: m.role, content: m.content }));
+    if (!msgs.some((m) => m.role === 'user')) return;
+
+    removeMessage(conv.id, lastAssistant.id);
+    setLoading(true);
+    setStreamingContent('');
+    cancelRequestedRef.current = false;
+    try {
+      const accumulatedContent = await streamReply(msgs, []);
+      if (accumulatedContent) {
+        addMessage(conv.id, { role: 'assistant', content: normalizeCaliliResponse(accumulatedContent) });
+      } else {
+        addMessage(conv.id, { role: 'assistant', content: '⚠️ NEXUS no devolvio contenido. Revisa la configuracion del motor.' });
+      }
+      setStreamingContent('');
+    } catch (error) {
+      if (!cancelRequestedRef.current) {
+        const errorMessage = error instanceof Error ? error.message : String(error);
+        addMessage(conv.id, { role: 'assistant', content: `❌ **Error:** ${errorMessage || 'No se pudo conectar con la API'}` });
+      }
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // Editar un mensaje propio: corta la conversacion ahi y reenvia el texto
+  // nuevo, como en ChatGPT.
+  const handleEditMessage = (messageId: string, newText: string) => {
+    if (!currentConversationId || isLoading || !newText.trim()) return;
+    truncateConversation(currentConversationId, messageId);
+    void handleSendMessage(newText.trim());
   };
 
   const stopResponse = () => {
@@ -358,7 +419,7 @@ export default function ChatInterface() {
     >
       <Sidebar userEmail={userEmail} onSignOut={signOut} />
       <main className="flex-1 flex flex-col min-h-0 min-w-0 w-full">
-        <MessageList messages={displayMessages} />
+        <MessageList messages={displayMessages} isLoading={isLoading} onRegenerate={handleRegenerate} onEditMessage={handleEditMessage} onSuggestion={(text) => void handleSendMessage(text)} />
         {generatedFiles.length > 0 && (
           <div className="border-t border-white/10 bg-chat-bg px-4 py-3">
             <div className="mx-auto flex max-w-3xl flex-wrap gap-2">

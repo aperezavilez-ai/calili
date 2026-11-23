@@ -138,3 +138,9 @@ Motivo (juicio de Luis, 2026-11-23): las respuestas salían de miles de palabras
 - Fuera «tu asistente virtual / personal» de toda la superficie: título de la app y manifest («Calili», a secas, como ChatGPT/Gemini), subtítulo de AuthScreen («Inicia sesión para continuar»), pie del Sidebar («Calili»), README y descripción del paquete.
 - La identidad en el prompt del sistema ya no es «el asistente personal de Luis» sino una IA conversacional general (la personalización real viene de la memoria por usuario, no de un slogan).
 - response-policy ya no reescribe presentaciones como «Soy Calili, tu asistente virtual» sino «Soy Calili.».
+
+## v3.0.0 — Experiencia de chat a la altura de los grandes
+- Acciones por mensaje: copiar, escuchar la respuesta (TTS), regenerar la última respuesta y editar un mensaje propio (corta la conversación ahí y reenvía, con borrado sincronizado en Supabase). Bloques de código con botón de copiar y etiqueta de lenguaje.
+- Pantalla inicial con tarjetas de sugerencia que disparan las herramientas reales (Excel, búsqueda, imagen, redacción).
+- Exportar conversación a Word: botón en cada fila del historial que por fin usa /api/export (la ruta existía huérfana desde el proyecto original).
+- Refactor: la pasada contra /api/chat vive en streamReply() y la comparten enviar/regenerar/editar; los mensajes se leen frescos del store. El modelo por defecto del selector ya no es el falso «gpt-5.5» sino openai/gpt-oss-120b.

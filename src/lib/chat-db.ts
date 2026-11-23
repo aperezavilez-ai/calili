@@ -84,6 +84,12 @@ export async function updateConversationTitleDb(id: string, title: string): Prom
   if (error) throw error;
 }
 
+export async function deleteMessageDb(id: string): Promise<void> {
+  const client = db();
+  const { error } = await client.from('messages').delete().eq('id', id);
+  if (error) throw error;
+}
+
 export async function deleteConversationDb(id: string): Promise<void> {
   const client = db();
   const { error } = await client.from('conversations').delete().eq('id', id);

@@ -1,8 +1,8 @@
 'use client';
 
 import { Message } from '@/store/chat-store';
-import { User } from 'lucide-react';
-import { useEffect, useRef } from 'react';
+import { User, Copy, Check, RefreshCw, Pencil, Volume2, Square, Loader2 } from 'lucide-react';
+import { useEffect, useRef, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { fixMarkdownTables } from '@/lib/markdown-fix';
@@ -11,9 +11,105 @@ import { vscDarkPlus } from 'react-syntax-highlighter/dist/esm/styles/prism';
 
 interface MessageListProps {
   messages: Message[];
+  isLoading?: boolean;
+  onRegenerate?: () => void;
+  onEditMessage?: (messageId: string, newText: string) => void;
+  onSuggestion?: (text: string) => void;
 }
 
-export function MessageList({ messages }: MessageListProps) {
+const SUGGESTIONS: Array<{ title: string; hint: string; prompt: string }> = [
+  {
+    title: 'Crear un Excel',
+    hint: 'Una tabla lista para descargar',
+    prompt: 'Crea una hoja de Excel con una tabla de precios de ejemplo para un negocio de servicios: columnas de servicio, descripción y precio.',
+  },
+  {
+    title: 'Buscar en internet',
+    hint: 'Información reciente con fuentes',
+    prompt: 'Busca en internet las novedades más recientes de inteligencia artificial y resúmelas en puntos breves.',
+  },
+  {
+    title: 'Crear una imagen',
+    hint: 'Describe lo que imaginas',
+    prompt: 'Crea una imagen de un león majestuoso en estilo blackwork, fondo oscuro y alto contraste.',
+  },
+  {
+    title: 'Redactar un texto',
+    hint: 'Un correo profesional en segundos',
+    prompt: 'Redacta un correo profesional y amable para confirmar una cita con un cliente e indicarle cómo prepararse.',
+  },
+];
+
+function cleanForSpeech(raw: string): string {
+  return raw
+    .replace(/```[\s\S]*?```/g, ' (bloque de código) ')
+    .replace(/!\[([^\]]*)\]\([^)]*\)/g, '$1')
+    .replace(/\[([^\]]+)\]\([^)]*\)/g, '$1')
+    .replace(/[#>*_`~|]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, 1500);
+}
+
+function CopyButton({ text }: { text: string }) {
+  const [copied, setCopied] = useState(false);
+  return (
+    <button
+      onClick={async () => {
+        try {
+          await navigator.clipboard.writeText(text);
+          setCopied(true);
+          window.setTimeout(() => setCopied(false), 1500);
+        } catch { /* portapapeles no disponible */ }
+      }}
+      className="rounded-md p-1.5 text-white/50 hover:bg-white/10 hover:text-white"
+      title="Copiar"
+      aria-label="Copiar"
+    >
+      {copied ? <Check className="h-4 w-4 text-emerald-400" /> : <Copy className="h-4 w-4" />}
+    </button>
+  );
+}
+
+const actionBtn = 'rounded-md p-1.5 text-white/50 hover:bg-white/10 hover:text-white disabled:opacity-40';
+
+export function MessageList({ messages, isLoading, onRegenerate, onEditMessage, onSuggestion }: MessageListProps) {
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [draft, setDraft] = useState('');
+  const [speakingId, setSpeakingId] = useState<string | null>(null);
+  const [loadingSpeakId, setLoadingSpeakId] = useState<string | null>(null);
+  const audioRef = useRef<HTMLAudioElement | null>(null);
+
+  useEffect(() => () => { audioRef.current?.pause(); }, []);
+
+  const speakText = async (id: string, raw: string) => {
+    if (speakingId === id) {
+      audioRef.current?.pause();
+      setSpeakingId(null);
+      return;
+    }
+    audioRef.current?.pause();
+    setLoadingSpeakId(id);
+    try {
+      const res = await fetch('/api/speak', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text: cleanForSpeech(raw) }),
+      });
+      if (!res.ok) throw new Error('speak');
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const audio = new Audio(url);
+      audioRef.current = audio;
+      audio.onended = () => { setSpeakingId(null); URL.revokeObjectURL(url); };
+      setSpeakingId(id);
+      await audio.play();
+    } catch {
+      setSpeakingId(null);
+    } finally {
+      setLoadingSpeakId(null);
+    }
+  };
   const scrollContainerRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -43,6 +139,20 @@ export function MessageList({ messages }: MessageListProps) {
           <p className="text-lg text-white/70 mb-8">
             ¿En qué puedo ayudarte hoy?
           </p>
+          {onSuggestion && (
+            <div className="grid gap-2 text-left sm:grid-cols-2">
+              {SUGGESTIONS.map((s) => (
+                <button
+                  key={s.title}
+                  onClick={() => onSuggestion(s.prompt)}
+                  className="rounded-xl border border-white/10 bg-white/5 px-4 py-3 transition hover:bg-white/10"
+                >
+                  <span className="block text-sm font-medium text-white/90">{s.title}</span>
+                  <span className="mt-0.5 block text-xs text-white/50">{s.hint}</span>
+                </button>
+              ))}
+            </div>
+          )}
 
         </div>
       </div>
@@ -95,7 +205,33 @@ export function MessageList({ messages }: MessageListProps) {
                     <span className="h-2 w-2 animate-bounce rounded-full bg-white/80" />
                   </div>
                 ) : message.role === 'user' ? (
-                  <p className="whitespace-pre-wrap leading-relaxed">{message.content}</p>
+                  editingId === message.id ? (
+                    <div className="space-y-2">
+                      <textarea
+                        value={draft}
+                        onChange={(e) => setDraft(e.target.value)}
+                        rows={3}
+                        autoFocus
+                        className="w-full rounded-xl border border-white/15 bg-white/5 px-3 py-2 text-white/95 outline-none focus:border-sky-400/60"
+                      />
+                      <div className="flex gap-2">
+                        <button
+                          onClick={() => { setEditingId(null); onEditMessage?.(message.id, draft); }}
+                          className="rounded-lg bg-sky-500 px-3 py-1.5 text-sm font-medium text-white hover:bg-sky-400"
+                        >
+                          Enviar
+                        </button>
+                        <button
+                          onClick={() => setEditingId(null)}
+                          className="rounded-lg border border-white/15 px-3 py-1.5 text-sm text-white/70 hover:bg-white/10"
+                        >
+                          Cancelar
+                        </button>
+                      </div>
+                    </div>
+                  ) : (
+                    <p className="whitespace-pre-wrap leading-relaxed">{message.content}</p>
+                  )
                 ) : (
                   <div className="prose prose-invert max-w-none prose-p:leading-relaxed prose-pre:bg-black/20 prose-pre:border prose-pre:border-white/10">
                     <ReactMarkdown
@@ -127,20 +263,27 @@ export function MessageList({ messages }: MessageListProps) {
                         code(props) {
                           const { className, children } = props;
                           const match = /language-(\w+)/.exec(className || '');
+                          const codeText = String(children).replace(/\n$/, '');
                           return match ? (
-                            <SyntaxHighlighter
-                              style={vscDarkPlus as any}
-                              language={match[1]}
-                              PreTag="div"
-                              customStyle={{
-                                background: 'rgba(0,0,0,0.3)',
-                                borderRadius: '8px',
-                                padding: '16px',
-                                fontSize: '14px'
-                              }}
-                            >
-                              {String(children).replace(/\n$/, '')}
-                            </SyntaxHighlighter>
+                            <div className="relative">
+                              <div className="absolute right-2 top-2 z-10 flex items-center gap-1">
+                                <span className="text-[11px] uppercase tracking-wide text-white/40">{match[1]}</span>
+                                <CopyButton text={codeText} />
+                              </div>
+                              <SyntaxHighlighter
+                                style={vscDarkPlus as any}
+                                language={match[1]}
+                                PreTag="div"
+                                customStyle={{
+                                  background: 'rgba(0,0,0,0.3)',
+                                  borderRadius: '8px',
+                                  padding: '16px',
+                                  fontSize: '14px'
+                                }}
+                              >
+                                {codeText}
+                              </SyntaxHighlighter>
+                            </div>
                           ) : (
                             <code className="bg-white/10 px-1.5 py-0.5 rounded text-sm">
                               {children}
@@ -154,6 +297,32 @@ export function MessageList({ messages }: MessageListProps) {
                   </div>
                 )}
               </div>
+              {message.id !== 'loading' && (
+                <div className="flex items-center gap-1 pt-1 opacity-70 transition-opacity hover:opacity-100">
+                  {message.role === 'assistant' ? (
+                    <>
+                      <CopyButton text={message.content} />
+                      <button onClick={() => void speakText(message.id, message.content)} className={actionBtn} title="Escuchar" aria-label="Escuchar">
+                        {loadingSpeakId === message.id ? <Loader2 className="h-4 w-4 animate-spin" /> : speakingId === message.id ? <Square className="h-4 w-4" /> : <Volume2 className="h-4 w-4" />}
+                      </button>
+                      {index === messages.length - 1 && onRegenerate && (
+                        <button onClick={onRegenerate} disabled={isLoading} className={actionBtn} title="Regenerar respuesta" aria-label="Regenerar respuesta">
+                          <RefreshCw className="h-4 w-4" />
+                        </button>
+                      )}
+                    </>
+                  ) : (
+                    <>
+                      <CopyButton text={message.content} />
+                      {onEditMessage && (
+                        <button onClick={() => { setEditingId(message.id); setDraft(message.content); }} className={actionBtn} title="Editar mensaje" aria-label="Editar mensaje">
+                          <Pencil className="h-4 w-4" />
+                        </button>
+                      )}
+                    </>
+                  )}
+                </div>
+              )}
             </div>
           </div>
         ))}

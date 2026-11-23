@@ -5,6 +5,7 @@ import {
   insertMessage,
   updateConversationTitleDb,
   deleteConversationDb,
+  deleteMessageDb,
 } from '@/lib/chat-db';
 
 export interface Message {
@@ -37,6 +38,8 @@ interface ChatStore {
   deleteConversation: (id: string) => void;
   setCurrentConversation: (id: string) => void;
   addMessage: (conversationId: string, message: Omit<Message, 'id' | 'timestamp'>) => void;
+  removeMessage: (conversationId: string, messageId: string) => void;
+  truncateConversation: (conversationId: string, messageId: string) => void;
   updateConversationTitle: (id: string, title: string) => void;
   setLoading: (loading: boolean) => void;
   toggleDarkMode: () => void;
@@ -143,6 +146,33 @@ export const useChatStore = create<ChatStore>()(
             sync(updateConversationTitleDb(conversationId, newTitle));
           }
         }
+      },
+
+      removeMessage: (conversationId, messageId) => {
+        set((state) => ({
+          conversations: state.conversations.map((conv) =>
+            conv.id === conversationId
+              ? { ...conv, messages: conv.messages.filter((m) => m.id !== messageId), updatedAt: Date.now() }
+              : conv
+          ),
+        }));
+        if (get().dbUserId) sync(deleteMessageDb(messageId));
+      },
+
+      truncateConversation: (conversationId, messageId) => {
+        const conv = get().conversations.find((c) => c.id === conversationId);
+        if (!conv) return;
+        const idx = conv.messages.findIndex((m) => m.id === messageId);
+        if (idx < 0) return;
+        const removed = conv.messages.slice(idx);
+        set((state) => ({
+          conversations: state.conversations.map((c) =>
+            c.id === conversationId
+              ? { ...c, messages: c.messages.slice(0, idx), updatedAt: Date.now() }
+              : c
+          ),
+        }));
+        if (get().dbUserId) removed.forEach((m) => sync(deleteMessageDb(m.id)));
       },
 
       updateConversationTitle: (id, title) => {

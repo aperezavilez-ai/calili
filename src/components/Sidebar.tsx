@@ -82,6 +82,30 @@ export function Sidebar({ userEmail, onSignOut }: { userEmail?: string; onSignOu
     setVoiceEnabled(!voiceEnabled);
   };
 
+  // Exportar la conversacion a Word usando /api/export (la ruta existia
+  // desde el proyecto original pero ningun boton la llamaba).
+  const handleExport = async (conv: { title: string; messages: Array<{ role: string; content: string }> }) => {
+    try {
+      const lines: string[] = [`# ${conv.title}`, ''];
+      for (const m of conv.messages) {
+        lines.push(m.role === 'user' ? `**Tú:** ${m.content}` : `**Calili:** ${m.content}`, '');
+      }
+      const res = await fetch('/api/export', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ content: lines.join('\n'), format: 'docx', title: conv.title }),
+      });
+      if (!res.ok) return;
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `${conv.title.replace(/[^\wáéíóúñ -]/gi, '').trim().slice(0, 60) || 'conversacion'}.docx`;
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch { /* exportacion no disponible */ }
+  };
+
   const handleStartEdit = (id: string, title: string) => {
     setEditingId(id);
     setEditTitle(title);
@@ -292,6 +316,16 @@ export function Sidebar({ userEmail, onSignOut }: { userEmail?: string; onSignOu
                   >
                     <span className="text-sm truncate flex-1">{conv.title}</span>
                     <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          void handleExport(conv);
+                        }}
+                        className="p-1 hover:bg-white/10 rounded"
+                        title="Exportar a Word"
+                      >
+                        <Download className="w-3 h-3" />
+                      </button>
                       <button
                         onClick={(e) => {
                           e.stopPropagation();

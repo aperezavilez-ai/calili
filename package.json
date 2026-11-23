@@ -1,6 +1,6 @@
 {
   "name": "calili",
-  "version": "2.9.0",
+  "version": "3.0.0",
   "description": "Calili — inteligencia artificial conversacional (PWA para web, iOS y Android)",
   "private": true,
   "scripts": {

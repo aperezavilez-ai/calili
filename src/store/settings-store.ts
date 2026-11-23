@@ -25,7 +25,7 @@ export const useSettingsStore = create<SettingsStore>()(
       voiceEnabled: false,
       voiceGender: 'female',
       aiMode: 'chat',
-      selectedModel: 'gpt-5.5',
+      selectedModel: 'openai/gpt-oss-120b',
       imageSize: '1024x1024',
 
       setVoiceEnabled: (enabled) => set({ voiceEnabled: enabled }),
