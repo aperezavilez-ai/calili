@@ -127,3 +127,9 @@ Motivo (juicio de Luis, 2026-11-23): las respuestas salían de miles de palabras
 ## v2.7.1 — Visión: Groq retiró Llama 4 Scout
 - Error en vivo de Luis (2026-11-23): «The model meta-llama/llama-4-scout-17b-16e-instruct does not exist» (404 model_not_found). Verificado en fuentes: Groq anunció el retiro el 2026-06-17 y lo apagó el 2026-07-17 en planes free/developer.
 - La visión pasa a una CADENA de modelos en nexus-gateway (VISION_MODELS): qwen/qwen3.8-27b → qwen/qwen3.6-27b → qwen/qwen3-vl-32b-instruct; ante un 404 model_not_found se prueba el siguiente antes del primer token, y la variable VISION_MODEL puede anteponer un ID propio. Otros errores (401/429) se reportan tal cual.
+
+## v2.8.0 — Modo voz como ChatGPT: conexión, sin texto en pantalla
+- Corrección de Luis: la voz se sentía lenta porque la transcripción y la respuesta se MOSTRABAN como texto en la pantalla de la orbe (renglón «Tú: …» y la respuesta escrita), como un paso intermedio visible.
+- La pantalla de voz ya no muestra ningún texto de la plática: solo la orbe y la palabra de estado. La transcripción y las respuestas se siguen guardando por escrito en el chat, por detrás, sin interferir.
+- Sonido de CONEXIÓN al activar el modo voz (arpegio cálido ascendente, earcon 'connect'), como el de ChatGPT al entrar.
+- Corte de silencio de 1.0 s a 0.8 s: la respuesta arranca antes tras cada frase.

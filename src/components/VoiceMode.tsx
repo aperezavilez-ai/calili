@@ -34,7 +34,6 @@ function plainForSpeech(markdown: string): string {
 
 export default function VoiceMode({ onClose, onFile }: VoiceModeProps) {
   const [phase, setPhase] = useState<Phase>('listening');
-  const [caption, setCaption] = useState('Te escucho…');
   const [level, setLevel] = useState(0);
   const [muted, setMuted] = useState(false);
   const mutedRef = useRef(false);
@@ -209,7 +208,6 @@ export default function VoiceMode({ onClose, onFile }: VoiceModeProps) {
   const listenOnce = useCallback(async () => {
     if (!openRef.current || mutedRef.current) return;
     setPhase('listening');
-    setCaption('Te escucho…');
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       if (!openRef.current) { stream.getTracks().forEach((t) => t.stop()); return; }
@@ -238,7 +236,7 @@ export default function VoiceMode({ onClose, onFile }: VoiceModeProps) {
         const now = Date.now();
         if (rms > 0.025) { heardSpeech = true; silenceSince = 0; }
         else if (heardSpeech) { if (!silenceSince) silenceSince = now; }
-        const silenceLong = heardSpeech && silenceSince > 0 && now - silenceSince > 1000;
+        const silenceLong = heardSpeech && silenceSince > 0 && now - silenceSince > 800;
         const tooLong = now - startedAt > 30000;
         if (silenceLong || tooLong) {
           if (recorder.state !== 'inactive') recorder.stop();
@@ -262,7 +260,6 @@ export default function VoiceMode({ onClose, onFile }: VoiceModeProps) {
       if (!heardSpeech || chunks.length === 0) { void listenOnce(); return; }
 
       setPhase('thinking');
-      setCaption('Pensando…');
       const form = new FormData();
       form.append('audio', new Blob(chunks, { type: recorder.mimeType || 'audio/webm' }), 'voz.webm');
       const tres = await fetch('/api/transcribe', { method: 'POST', body: form });
@@ -270,14 +267,12 @@ export default function VoiceMode({ onClose, onFile }: VoiceModeProps) {
       const userText = String(tdata?.text || '').trim();
       if (!userText) { void listenOnce(); return; }
       if (mutedRef.current) return;
-      setCaption(`Tú: ${userText}`);
 
       streamDoneRef.current = false;
       speakCueRef.current = false;
       const turnDone = new Promise<void>((resolve) => { turnDoneRef.current = resolve; });
       const reply = await askCalili(userText);
       if (!openRef.current || mutedRef.current) return;
-      setCaption(reply.length > 220 ? `${reply.slice(0, 220)}…` : reply);
       streamDoneRef.current = true;
       if (queueRef.current.length === 0 && !pumpingRef.current) {
         turnDoneRef.current = null;
@@ -292,12 +287,12 @@ export default function VoiceMode({ onClose, onFile }: VoiceModeProps) {
       if (!openRef.current) return;
       playEarcon('error');
       setPhase('error');
-      setCaption('No pude usar el micrófono o falló la conexión. Toca la orbe para reintentar.');
     }
   }, [askCalili, pumpQueue]);
 
   useEffect(() => {
     openRef.current = true;
+    playEarcon('connect');
     void loadMemoryFacts(useChatStore.getState().dbUserId)
       .then((facts) => { factsRef.current = facts; })
       .catch(() => undefined)
@@ -327,7 +322,6 @@ export default function VoiceMode({ onClose, onFile }: VoiceModeProps) {
       done?.();
       setLevel(0);
       playEarcon('mute');
-      setCaption('Micrófono en pausa. Toca el micrófono para seguir hablando.');
     } else {
       mutedRef.current = false;
       setMuted(false);
@@ -382,7 +376,6 @@ export default function VoiceMode({ onClose, onFile }: VoiceModeProps) {
         {phase === 'speaking' && 'Calili está hablando'}
         {phase === 'error' && <><MicOff className="h-4 w-4" /> Algo falló</>}
       </p>
-      <p className="mt-3 max-w-xl px-6 text-center text-lg leading-relaxed text-white/90">{caption}</p>
       <button
         onClick={toggleMute}
         className={`mt-9 grid h-14 w-14 place-items-center rounded-full border transition ${

@@ -36,13 +36,18 @@ function tone(
   osc.stop(startAt + duration + 0.05);
 }
 
-export type EarconKind = 'listen' | 'speak' | 'mute' | 'unmute' | 'error';
+export type EarconKind = 'connect' | 'listen' | 'speak' | 'mute' | 'unmute' | 'error';
 
 export function playEarcon(kind: EarconKind) {
   const ac = audioContext();
   if (!ac) return;
   const now = ac.currentTime + 0.01;
   switch (kind) {
+    case 'connect': // conexion: arpegio calido ascendente (como ChatGPT al entrar)
+      tone(ac, now, 392, 392, 0.12, 0.04);
+      tone(ac, now + 0.09, 587, 587, 0.12, 0.04);
+      tone(ac, now + 0.18, 784, 784, 0.22, 0.045);
+      break;
     case 'listen': // pop ascendente suave: "te escucho"
       tone(ac, now, 540, 880, 0.13);
       break;
