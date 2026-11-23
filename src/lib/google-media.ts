@@ -48,7 +48,7 @@ async function generateContent(
     });
     if (!res.ok) {
       const detail = await res.text().catch(() => '');
-      if (isModelMissing(res.status, detail)) {
+      if (isModelMissing(res.status, detail) || res.status === 429) {
         lastError = new Error(`google ${model} ${res.status}`);
         continue;
       }
@@ -74,10 +74,13 @@ function parseDataUrl(dataUrl: string): { mime: string; data: string } | null {
 
 // --- Imagen: generar o editar ---------------------------------------------
 
+// Primero el modelo con cuota gratuita real de imagenes; el preview va
+// despues: su nivel gratuito de imagen es minimo o nulo y devolvia 429 al
+// primer intento aunque el usuario no hubiera creado nada.
 const IMAGE_MODELS = [
   ...(process.env.GOOGLE_IMAGE_MODEL ? [process.env.GOOGLE_IMAGE_MODEL] : []),
-  'gemini-3.1-flash-image-preview',
   'gemini-2.5-flash-image',
+  'gemini-3.1-flash-image-preview',
 ];
 
 export async function googleImage(
