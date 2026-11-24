@@ -15,6 +15,7 @@ export interface ToolCapabilities {
   imageEdit: boolean;
   memory: boolean;
   googleMedia: boolean;
+  avatarService: boolean;
 }
 
 export function toolCapabilities(): ToolCapabilities {
@@ -26,6 +27,7 @@ export function toolCapabilities(): ToolCapabilities {
     imageEdit: Boolean(process.env.OPENAI_API_KEY) || Boolean(googleAiKey()),
     memory: true,
     googleMedia: Boolean(googleAiKey()),
+    avatarService: Boolean(process.env.AVATAR_SERVICE_URL),
   };
 }
 
@@ -116,6 +118,25 @@ export function toolDefinitions(caps: ToolCapabilities) {
     });
   }
 
+  if (caps.avatarService) {
+    tools.push({
+      type: 'function',
+      function: {
+        name: 'crear_video_hablado',
+        description:
+          'Crea un VIDEO HABLADO: la persona de la foto que el usuario adjuntó habla el guion con los labios sincronizados a la voz. Tarda varios minutos. Úsala SOLO cuando el usuario adjunte la foto de una persona y pida que hable, diga un texto, presente algo o grabe un mensaje en video. Escribe el guion EXACTO que debe decir, en el idioma del usuario, máximo ~60 segundos de voz (unas 130 palabras). Si el usuario pide fondo musical, marca musica=true y describe la musica en pocas palabras.',
+        parameters: {
+          type: 'object',
+          properties: {
+            guion: { type: 'string', description: 'El texto exacto que la persona dice en el video.' },
+            musica: { type: 'boolean', description: 'true si debe llevar musica de fondo.' },
+            descripcion_musica: { type: 'string', description: 'Si musica=true: genero y ambiente de la musica de fondo.' },
+          },
+          required: ['guion'],
+        },
+      },
+    });
+  }
   if (caps.memory) {
     tools.push({
       type: 'function',
@@ -294,6 +315,38 @@ export async function executeTool(name: string, rawArgs: string, context?: { ima
         );
         return {
           resultForModel: 'Video creado (8 segundos, con audio): ya se le mostró al usuario con reproductor y botón de descarga. Confírmalo en una frase breve y sin mencionar motores ni proveedores.',
+          file: result.file,
+        };
+      }
+      case 'crear_video_hablado': {
+        const image = context?.images?.[0];
+        if (!image) {
+          return { resultForModel: 'Para el video hablado necesito que el usuario adjunte primero la foto de la persona. Pidesela en una frase.' };
+        }
+        const { synthesizeNarration } = await import('@/lib/tts');
+        const { createTalkingVideo } = await import('@/lib/avatar-studio');
+        const narration = await synthesizeNarration(String(args.guion ?? ''));
+        let musicBase64: string | undefined;
+        let musicMime: string | undefined;
+        if (args.musica) {
+          try {
+            const { googleMusic } = await import('@/lib/google-media');
+            const music = await googleMusic(String(args.descripcion_musica || 'musica de fondo suave e instrumental'), 'clip');
+            musicBase64 = music.file.base64;
+            musicMime = music.file.mime;
+          } catch {
+            // Sin musica si el motor musical falla: el video hablado manda.
+          }
+        }
+        const result = await createTalkingVideo({
+          imageDataUrl: image,
+          audioBase64: narration.base64,
+          audioMime: narration.mime,
+          musicBase64,
+          musicMime,
+        });
+        return {
+          resultForModel: 'Video hablado creado: la persona de la foto dice el guion con los labios sincronizados y ya se le mostro al usuario con reproductor y descarga. Confirmalo en una frase breve y sin mencionar motores ni proveedores.',
           file: result.file,
         };
       }
