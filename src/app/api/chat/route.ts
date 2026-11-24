@@ -4,6 +4,7 @@ import {
   streamVisionChat,
   completeWithTools,
   summarizeHistory,
+  chatProviderAvailable,
   NexusConfigError,
   type NexusMessage,
 } from '@/lib/nexus-gateway';
@@ -143,7 +144,7 @@ export async function POST(req: NextRequest) {
             const effectiveUpTo = Math.min(clientUpTo, droppedCount);
             if (clientSummary && effectiveUpTo === droppedCount) {
               summaryText = clientSummary;
-            } else if (process.env.GROQ_API_KEY) {
+            } else if (chatProviderAvailable()) {
               try {
                 const sliceToSummarize = conversation.slice(effectiveUpTo, droppedCount);
                 const transcript = sliceToSummarize
@@ -176,7 +177,7 @@ export async function POST(req: NextRequest) {
             // Primero: ¿pide crear/recrear una imagen? El modelo de texto
             // decide con las herramientas; si llama crear_imagen, la imagen
             // adjunta viaja en el contexto del servidor (no en los args).
-            if (!voiceMode && caps.imageGen && process.env.GROQ_API_KEY) {
+            if (!voiceMode && caps.imageGen && chatProviderAvailable()) {
               try {
                 const note: NexusMessage = {
                   role: 'system',
@@ -241,7 +242,7 @@ export async function POST(req: NextRequest) {
           // recordar/olvidar sí viajan: Luis probó decirle "soy Luis"
           // hablando y la memoria es justo lo que espera que funcione.
           let handled = false;
-          if (voiceMode && process.env.GROQ_API_KEY) {
+          if (voiceMode && chatProviderAvailable()) {
             try {
               const memoryDefs = toolDefinitions({ ...caps, createFiles: false, webSearch: false, readRepos: false, imageGen: false });
               if (memoryDefs.length > 0) {
@@ -273,10 +274,10 @@ export async function POST(req: NextRequest) {
             }
           }
 
-          // --- Camino con herramientas (solo Groq) ------------------------
+          // --- Camino con herramientas (proveedor principal) --------------
           const definitions = toolDefinitions(caps);
           // En modo voz se salta la pasada de herramientas: la latencia manda.
-          if (!voiceMode && definitions.length > 0 && process.env.GROQ_API_KEY) {
+          if (!voiceMode && definitions.length > 0 && chatProviderAvailable()) {
             try {
               const completion = await completeWithTools(
                 fullMessages as unknown[],

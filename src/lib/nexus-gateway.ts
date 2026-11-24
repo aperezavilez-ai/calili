@@ -3,15 +3,20 @@
 // en las rutas ni en la interfaz: todo se decide por variables de entorno.
 //
 // Proveedores (API compatible con OpenAI, /chat/completions):
-//   - groq  : producción. Requiere GROQ_API_KEY. Modelo: NEXUS_MODEL
+//   - meai  : principal si MEAI_API_KEY está definida (el pool propio de
+//             Luis, el mismo que alimenta EditCoreAI). Base:
+//             https://api.meai.cloud/v1. Modelo: MEAI_MODEL (por defecto
+//             claude-sonnet-4.6). Visión: MEAI_VISION_MODEL (glm-5.2).
+//   - groq  : respaldo. Requiere GROQ_API_KEY. Modelo: NEXUS_MODEL
 //             (por defecto openai/gpt-oss-120b).
 //   - local : desarrollo / respaldo en la PC de Luis. Solo se activa si
 //             NEXUS_LOCAL_URL está definida (p. ej. http://127.0.0.1:11434/v1
 //             para Ollama o http://127.0.0.1:1234/v1 para LM Studio).
 //             Modelo: NEXUS_LOCAL_MODEL. Clave opcional: NEXUS_LOCAL_API_KEY.
 //
-// Orden: NEXUS_PRIMARY=groq|local (por defecto groq). Si el proveedor
-// primario falla ANTES de entregar el primer token, se intenta el siguiente.
+// Orden: meai → groq → local; NEXUS_PRIMARY puede anteponer otro. Si el
+// proveedor primario falla ANTES de entregar el primer token, se intenta
+// el siguiente.
 
 export interface NexusMessage {
   role: 'user' | 'assistant' | 'system';
@@ -19,7 +24,7 @@ export interface NexusMessage {
 }
 
 export interface NexusProvider {
-  id: 'groq' | 'local';
+  id: 'groq' | 'local' | 'meai';
   baseUrl: string;
   apiKey: string;
   model: string;
@@ -28,6 +33,11 @@ export interface NexusProvider {
 export class NexusConfigError extends Error {}
 
 const GROQ_BASE_URL = process.env.GROQ_BASE_URL || 'https://api.groq.com/openai/v1';
+const MEAI_BASE_URL = process.env.MEAI_BASE_URL || 'https://api.meai.cloud/v1';
+export const DEFAULT_MEAI_MODEL = 'claude-sonnet-4.6';
+// En ME AI la visión la atiende glm-5.2 (así lo enruta EditCoreAI con la
+// misma llave); MEAI_VISION_MODEL permite cambiarlo sin tocar código.
+export const MEAI_VISION_MODEL = process.env.MEAI_VISION_MODEL || 'glm-5.2';
 // Groq retiro llama-4-scout (apagado el 2026-07-17 en planes free/developer:
 // devolvia 404 model_not_found). La vision vive en la familia Qwen-VL; se
 // prueban en orden hasta que uno responda, y VISION_MODEL puede anteponer
@@ -43,6 +53,15 @@ export const DEFAULT_NEXUS_MODEL = 'openai/gpt-oss-120b';
 const FIRST_TOKEN_TIMEOUT_MS = 20000;
 
 export function resolveProviders(env: NodeJS.ProcessEnv = process.env): NexusProvider[] {
+  const meai: NexusProvider | null = env.MEAI_API_KEY
+    ? {
+        id: 'meai',
+        baseUrl: MEAI_BASE_URL.replace(/\/+$/, ''),
+        apiKey: env.MEAI_API_KEY,
+        model: env.MEAI_MODEL || DEFAULT_MEAI_MODEL,
+      }
+    : null;
+
   const groq: NexusProvider | null = env.GROQ_API_KEY
     ? {
         id: 'groq',
@@ -61,8 +80,23 @@ export function resolveProviders(env: NodeJS.ProcessEnv = process.env): NexusPro
       }
     : null;
 
-  const ordered = env.NEXUS_PRIMARY === 'local' ? [local, groq] : [groq, local];
-  return ordered.filter((p): p is NexusProvider => p !== null);
+  const byPriority = [meai, groq, local].filter((p): p is NexusProvider => p !== null);
+  const primary = env.NEXUS_PRIMARY;
+  if (primary) {
+    const idx = byPriority.findIndex((p) => p.id === primary);
+    if (idx > 0) {
+      const [chosen] = byPriority.splice(idx, 1);
+      byPriority.unshift(chosen);
+    }
+  }
+  return byPriority;
+}
+
+// ¿Hay algún motor de chat configurado? Las rutas lo usan para decidir si
+// las pasadas de herramientas corren (antes miraban solo GROQ_API_KEY y
+// con ME AI como principal las herramientas habrían quedado apagadas).
+export function chatProviderAvailable(env: NodeJS.ProcessEnv = process.env): boolean {
+  return resolveProviders(env).length > 0;
 }
 
 // Ante un 429 (limite de velocidad del nivel de Groq), el propio error
@@ -150,7 +184,7 @@ export async function* streamNexusChat(
   const providers = resolveProviders();
   if (providers.length === 0) {
     throw new NexusConfigError(
-      'NEXUS no está configurado: falta GROQ_API_KEY (producción) o NEXUS_LOCAL_URL (local). Revisa tu archivo .env.',
+      'NEXUS no está configurado: falta MEAI_API_KEY (principal), GROQ_API_KEY (respaldo) o NEXUS_LOCAL_URL (local). Revisa tu archivo .env.',
     );
   }
 
@@ -196,7 +230,7 @@ export async function* streamNexusChat(
 }
 
 // ---------------------------------------------------------------------------
-// Fase 3: herramientas y visión (solo Groq: el proveedor local no las tiene)
+// Fase 3: herramientas y visión (proveedor principal; el local no las tiene)
 // ---------------------------------------------------------------------------
 
 export interface NexusToolCall {
@@ -208,6 +242,19 @@ export interface NexusToolCall {
 export interface NexusCompletion {
   content: string;
   toolCalls: NexusToolCall[];
+}
+
+// El proveedor que atiende herramientas, resúmenes y (si es ME AI) la
+// visión: el primero de la lista resuelta (ME AI si hay llave, si no Groq).
+function primaryProvider(): NexusProvider {
+  const providers = resolveProviders();
+  const primary = providers[0];
+  if (!primary) {
+    throw new NexusConfigError(
+      'Esta función requiere el motor: falta MEAI_API_KEY o GROQ_API_KEY. Revisa tu archivo .env.',
+    );
+  }
+  return primary;
 }
 
 function groqProvider(): NexusProvider {
@@ -228,7 +275,7 @@ export async function completeWithTools(
   tools: unknown[],
   signal?: AbortSignal,
 ): Promise<NexusCompletion> {
-  const provider = groqProvider();
+  const provider = primaryProvider();
   const doFetch = () => fetch(`${provider.baseUrl}/chat/completions`, {
     method: 'POST',
     headers: {
@@ -257,7 +304,7 @@ export async function completeWithTools(
   }
   if (!response.ok) {
     const detail = await response.text().catch(() => '');
-    throw new Error(`El motor NEXUS (groq) respondió ${response.status}. ${detail.slice(0, 300)}`);
+    throw new Error(`El motor NEXUS (${provider.id}) respondió ${response.status}. ${detail.slice(0, 300)}`);
   }
 
   const data = await response.json();
@@ -272,7 +319,7 @@ export async function completeWithTools(
 // historial visible del usuario nunca se toca; esto es solo lo que el
 // modelo recibe a cambio de los mensajes que ya no caben en contexto.
 export async function summarizeHistory(previousSummary: string, transcript: string): Promise<string> {
-  const provider = groqProvider();
+  const provider = primaryProvider();
   const response = await fetch(`${provider.baseUrl}/chat/completions`, {
     method: 'POST',
     headers: {
@@ -309,16 +356,21 @@ export async function summarizeHistory(previousSummary: string, transcript: stri
 }
 
 
-// Streaming desde el modelo de visión (Llama 4 Scout en Groq). Los mensajes
-// llevan partes de texto e imagen (image_url con data: en base64).
+// Streaming desde el modelo de visión. Con llave de ME AI manda glm-5.2
+// por ME AI (así lo enruta EditCoreAI); si no, la cadena de modelos de
+// visión de Groq. Los mensajes llevan partes de texto e imagen
+// (image_url con data: en base64).
 export async function* streamVisionChat(
   messages: unknown[],
   signal?: AbortSignal,
 ): AsyncGenerator<string> {
-  const provider = groqProvider();
+  const providers = resolveProviders();
+  const meai = providers.find((p) => p.id === 'meai');
+  const provider = meai ?? groqProvider();
+  const models = meai ? [MEAI_VISION_MODEL] : VISION_MODELS;
   let response: Response | null = null;
   let lastStatus = 0;
-  for (const model of VISION_MODELS) {
+  for (const model of models) {
     const attempt = await fetch(`${provider.baseUrl}/chat/completions`, {
       method: 'POST',
       headers: {
@@ -346,7 +398,7 @@ export async function* streamVisionChat(
     }
   }
   if (!response || !response.body) {
-    throw new Error(`Ningún modelo de visión de Groq respondió (último estado ${lastStatus}). Groq pudo haber retirado el modelo actual; avísale a Luis para actualizar el ID.`);
+    throw new Error(`Ningún modelo de visión respondió (último estado ${lastStatus}). El proveedor pudo haber retirado el modelo actual; avísale a Luis para actualizar el ID.`);
   }
 
 
