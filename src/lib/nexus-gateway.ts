@@ -65,13 +65,26 @@ export function resolveProviders(env: NodeJS.ProcessEnv = process.env): NexusPro
   return ordered.filter((p): p is NexusProvider => p !== null);
 }
 
+// Ante un 429 (limite de velocidad del nivel de Groq), el propio error
+// dice cuantos segundos esperar: se espera ESE tiempo y se reintenta una
+// vez, en vez de mostrarle el error crudo al usuario.
+function retryDelayMs(detail: string): number {
+  const match = /try again in\s+([0-9]+(?:\.[0-9]+)?)\s*s/i.exec(detail);
+  const seconds = match ? Number(match[1]) : 5;
+  return Math.min(Math.max(seconds, 1), 25) * 1000;
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 async function* streamFromProvider(
   provider: NexusProvider,
   messages: NexusMessage[],
   maxTokens: number,
   signal?: AbortSignal,
 ): AsyncGenerator<string> {
-  const response = await fetch(`${provider.baseUrl}/chat/completions`, {
+  const doFetch = () => fetch(`${provider.baseUrl}/chat/completions`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -86,6 +99,13 @@ async function* streamFromProvider(
     signal,
   });
 
+
+  let response = await doFetch();
+  if (response.status === 429) {
+    const detail = await response.text().catch(() => '');
+    await sleep(retryDelayMs(detail));
+    response = await doFetch();
+  }
   if (!response.ok || !response.body) {
     const detail = await response.text().catch(() => '');
     throw new Error(`El motor NEXUS (${provider.id}) respondió ${response.status}. ${detail.slice(0, 300)}`);
@@ -209,7 +229,7 @@ export async function completeWithTools(
   signal?: AbortSignal,
 ): Promise<NexusCompletion> {
   const provider = groqProvider();
-  const response = await fetch(`${provider.baseUrl}/chat/completions`, {
+  const doFetch = () => fetch(`${provider.baseUrl}/chat/completions`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -228,6 +248,13 @@ export async function completeWithTools(
       : (signal ?? AbortSignal.timeout(90_000)),
   });
 
+
+  let response = await doFetch();
+  if (response.status === 429) {
+    const detail = await response.text().catch(() => '');
+    await sleep(retryDelayMs(detail));
+    response = await doFetch();
+  }
   if (!response.ok) {
     const detail = await response.text().catch(() => '');
     throw new Error(`El motor NEXUS (groq) respondió ${response.status}. ${detail.slice(0, 300)}`);

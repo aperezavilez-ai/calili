@@ -31,8 +31,15 @@ function compactHistory(messages: NexusMessage[]): NexusMessage[] {
 
 function errorMessage(error: unknown): string {
   if (error instanceof NexusConfigError) return error.message;
-  // Los errores que ve el usuario no nombran proveedores ni traen el
-  // detalle crudo del motor: eso rompia el candado de identidad.
+  const raw = error instanceof Error ? error.message : String(error ?? '');
+  // Limite de velocidad del motor: se dice en humano y sin el JSON crudo
+  // del proveedor (que ademas rompia el candado de identidad).
+  if (/\b429\b|rate limit/i.test(raw)) {
+    return 'Estoy recibiendo demasiadas peticiones en este momento. Espera unos segundos y vuelve a intentarlo.';
+  }
+  if (raw.includes('{"error"')) {
+    return 'El motor no pudo completar la respuesta. Inténtalo de nuevo en un momento.';
+  }
   return publicErrorMessage(error);
 }
 
