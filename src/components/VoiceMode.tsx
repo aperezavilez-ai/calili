@@ -111,6 +111,9 @@ export default function VoiceMode({ onClose, onFile }: VoiceModeProps) {
           audio.onended = () => { cancelPlayRef.current = null; URL.revokeObjectURL(url); resolve(true); };
           audio.onerror = () => { cancelPlayRef.current = null; URL.revokeObjectURL(url); resolve(false); };
           audio.src = url;
+          // El elemento persistente nacio con volume=0 (desbloqueo
+          // silencioso al abrir): sin esta linea, la voz suena a cero.
+          audio.volume = 1;
           audio.play().then(() => undefined).catch(() => resolve(false));
         });
         if (!played && openRef.current && !mutedRef.current) {
