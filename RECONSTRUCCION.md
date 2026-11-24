@@ -191,3 +191,8 @@ Directriz de Luis (2026-11-23): Calili debe crear imágenes desde texto, videos 
 ## v3.3.1 — La voz del modo voz sonaba a volumen cero (causa en código)
 - Juicio en vivo de Luis: «le hablo, escucha, y cuando habla no se escucha ella»; el sonidito de conexión sí sonaba leve y Chrome NO estaba silenciado (el menú de la pestaña ofrecía «Silenciar sitio», YouTube sonaba bien). Causa localizada en VoiceMode: el elemento de audio persistente se crea para el desbloqueo con `unlock.volume = 0` y pumpQueue lo reutilizaba para todas las respuestas SIN restaurar el volumen — la reproducción «funcionaba» (play() y onended normales, por eso nunca saltó el respaldo) pero a volumen 0.
 - Corrección: `audio.volume = 1` al cargar cada bloque de voz en pumpQueue.
+
+## v3.3.2 — Servicio de avatar con la interfaz real de LongCat (para RunPod)
+- Luis eligió rentar la GPU (abrió RunPod). Lu leyó el código real de run_demo_avatar_single_audio_to_video.py: se invoca con torchrun + input.json {prompt, cond_image, cond_audio:{person1}}, los pesos base deben ser hermanos de los del avatar, 93 frames a 25 fps por segmento (~3,7 s + 3,2 s por segmento extra) y en 24 GB manda --use_int8.
+- avatar-service/main.py reescrito contra esa interfaz: calcula los segmentos desde la duración real del audio (ffprobe, tope 12), escribe el input.json, corre torchrun con avatar-v1.5 + distill + int8 y mezcla la música con ffmpeg. README con la puesta en marcha del pod.
+- Límite declarado: Calili espera ~280 s por la ruta; guiones cortos (10-20 s) hasta que exista la versión asíncrona.
