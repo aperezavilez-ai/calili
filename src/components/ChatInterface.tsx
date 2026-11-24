@@ -343,7 +343,7 @@ export default function ChatInterface() {
           addMessage(convId, { role: 'assistant', content: finalContent });
           if (wantsVoice || voiceEnabled) speakResponse(finalContent);
         } else {
-          addMessage(convId, { role: 'assistant', content: '⚠️ NEXUS no devolvio contenido. Revisa la configuracion del motor.' });
+          addMessage(convId, { role: 'assistant', content: 'La respuesta llegó vacía. Toca el botón de regenerar para intentarlo de nuevo.' });
         }
         setStreamingContent('');
       }
@@ -392,7 +392,7 @@ export default function ChatInterface() {
       if (accumulatedContent) {
         addMessage(conv.id, { role: 'assistant', content: normalizeCaliliResponse(accumulatedContent) });
       } else {
-        addMessage(conv.id, { role: 'assistant', content: '⚠️ NEXUS no devolvio contenido. Revisa la configuracion del motor.' });
+        addMessage(conv.id, { role: 'assistant', content: 'La respuesta llegó vacía. Toca el botón de regenerar para intentarlo de nuevo.' });
       }
       setStreamingContent('');
     } catch (error) {

@@ -308,11 +308,21 @@ export async function POST(req: NextRequest) {
                 for (const file of files) {
                   send(controller, { file });
                 }
+                let closingText = '';
                 for await (const chunk of streamNexusChat(
                   workingMessages as unknown as NexusMessage[],
                   { signal: req.signal },
                 )) {
+                  closingText += chunk;
                   send(controller, { content: chunk });
+                }
+                if (!closingText.trim()) {
+                  const names = files.map((f) => f.name).join(', ');
+                  send(controller, {
+                    content: files.length > 0
+                      ? `Listo, ya lo creé: ${names}. Lo tienes arriba con su botón de descarga. Si quieres, ajusto el diseño o los textos.`
+                      : 'Listo, ya quedó hecho. Si quieres, lo ajustamos.',
+                  });
                 }
                 handled = true;
               } else if (completion.content) {

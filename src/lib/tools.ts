@@ -68,7 +68,7 @@ export function toolDefinitions(caps: ToolCapabilities) {
       function: {
         name: 'crear_imagen',
         description:
-          'Crea una imagen real (JPG/PNG) y se la muestra al usuario con opción de descarga. Úsala cuando pida una imagen, un logo, un flyer visual, una ilustración o recrear/modificar una imagen. Escribe el prompt en INGLÉS, muy detallado: sujeto, estilo, colores, composición, iluminación y formato. Si el usuario adjuntó una imagen y pide recrearla o cambiarla, marca usar_adjunta=true y describe en el prompt la imagen FINAL completa que quiere.',
+          'Crea una imagen real (JPG/PNG) y se la muestra al usuario con opción de descarga. Úsala cuando pida una imagen, un logo, un flyer visual, una ilustración o recrear/modificar una imagen. Escribe el prompt en INGLÉS, muy detallado: sujeto, estilo, colores, composición, iluminación y formato. Si el usuario adjuntó una imagen y pide recrearla o cambiarla, marca usar_adjunta=true y describe en el prompt la imagen FINAL completa que quiere. REGLA PARA FLYERS Y DISEÑOS CON TEXTO: si el encargo es un flyer, póster, anuncio o diseño que lleva textos (nombre del negocio, teléfono, precio, frases), el prompt debe ser el diseño COMPLETO: empieza con promotional flyer design e incluye CADA texto EXACTO entre comillas (verbatim text: "..."), su posición y su jerarquía (titular grande arriba, datos de contacto abajo). NUNCA reduzcas un encargo de diseño a solo el dibujo o la foto del sujeto: un flyer sin sus textos no cumple el encargo.',
         parameters: {
           type: 'object',
           properties: {
