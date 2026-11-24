@@ -349,6 +349,9 @@ export async function POST(req: NextRequest) {
 
           controller.enqueue(encoder.encode('data: [DONE]\n\n'));
         } catch (error) {
+          // El usuario recibe el mensaje limpio (candado de identidad),
+          // pero el error real queda en el registro del servidor.
+          console.error('Calili: error de turno', error);
           send(controller, { error: errorMessage(error) });
         } finally {
           clearInterval(heartbeat);

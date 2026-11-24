@@ -383,6 +383,11 @@ export async function executeTool(name: string, rawArgs: string, context?: { ima
         return { resultForModel: `Herramienta desconocida: ${name}` };
     }
   } catch (error) {
+    // El error real NUNCA debe perderse: va al registro del servidor
+    // (Vercel Runtime Logs) antes de convertirse en texto para el modelo.
+    // Sin esta línea, un fallo de Veo/Google se volvía una disculpa
+    // genérica y la causa era invisible (pasó el 2026-11-24).
+    console.error(`Calili: herramienta ${name} falló`, error);
     return {
       resultForModel: `La herramienta ${name} falló: ${error instanceof Error ? error.message : 'error desconocido'}. Explícaselo al usuario en una frase.`,
     };
