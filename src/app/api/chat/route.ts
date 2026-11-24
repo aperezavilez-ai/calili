@@ -180,7 +180,7 @@ export async function POST(req: NextRequest) {
               try {
                 const note: NexusMessage = {
                   role: 'system',
-                  content: 'El usuario adjuntó una imagen en este mensaje (la tienes en el servidor). Si pide crear, recrear, modificar o generar una imagen, llama crear_imagen con usar_adjunta=true y un prompt en inglés que describa la imagen FINAL completa. Si solo pide analizarla o preguntar por ella, no llames herramientas.',
+                  content: 'El usuario adjuntó una imagen en este mensaje (la tienes en el servidor). Si pide ANIMAR la imagen, darle movimiento, convertirla en video o hacer un clip con ella, llama crear_video con usar_adjunta=true y una descripción en inglés del movimiento, la escena y el sonido. Si pide crear, recrear, modificar o generar una imagen, llama crear_imagen con usar_adjunta=true y un prompt en inglés que describa la imagen FINAL completa. Si solo pide analizarla o preguntar por ella, no llames herramientas.',
                 };
                 const completion = await completeWithTools(
                   [...fullMessages, note] as unknown[],
