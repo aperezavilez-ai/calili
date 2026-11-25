@@ -1,10 +1,12 @@
 import type { GeneratedFile } from '@/lib/file-generator';
 
 // Estudio creativo de Google (una sola clave de AI Studio):
-// - Imagenes y EDICION: Gemini Flash Image ("Nano Banana") — genera y edita
-//   la imagen adjunta conservando el resto, conversando.
-// - Video: Veo 3.1 Fast — texto o imagen a video de 8 s con audio; es
-//   asincrono (operacion de larga duracion) y aqui se espera el resultado.
+// - Imagenes y EDICION: primero la ruta HQ — Nano Banana 2.1 por la API
+//   de Interactions pidiendo salida 2K (mejor texto y detalle); si esa
+//   ruta falla, la cadena generateContent de abajo hace de respaldo.
+// - Video: Gemini Omni Flash por la API de Interactions — texto o
+//   imagen a video en 1080p con audio; llamada sincrona, el MP4 vuelve
+//   en base64 dentro de la respuesta.
 // - Musica: Lyria 3.5 — canciones completas en MP3 (o clip de 30 s).
 // Todas las salidas llevan marca SynthID de Google. Los IDs de modelo van
 // en cadena con respaldo y se pueden anteponer por variables de entorno,
@@ -115,6 +117,73 @@ export async function googleImage(
   throw new Error('Google no devolvió imagen en su respuesta.');
 }
 
+// --- Imagen HQ: Nano Banana 2.1 por Interactions, salida 2K -----------------
+// La documentacion vigente de Google pone gemini-nano-banana-2.1 como su
+// modelo principal de imagen (mejor texto y calidad, salidas 1K/2K/4K) y
+// el tamano se pide con response_format {type:'image', image_size:'2K'}
+// por la MISMA API de Interactions que ya usa el video. Si el servidor
+// rechaza el formato con tamanio (400), se reintenta una vez sin el.
+export async function googleImageHQ(
+  prompt: string,
+  editImageDataUrl?: string,
+): Promise<{ file: GeneratedFile; note?: string }> {
+  const model = process.env.GOOGLE_IMAGE_MODEL_HQ || 'gemini-nano-banana-2.1';
+  const input: unknown[] = [{ type: 'text', text: prompt }];
+  if (editImageDataUrl) {
+    const img = parseDataUrl(editImageDataUrl);
+    if (img) input.push({ type: 'image', data: img.data, mime_type: img.mime });
+  }
+
+  const attempt = async (withSize: boolean) => fetch(`${BASE}/interactions`, {
+    method: 'POST',
+    headers: headers(),
+    body: JSON.stringify({
+      model,
+      input,
+      response_format: withSize ? { type: 'image', image_size: '2K' } : { type: 'image' },
+    }),
+    signal: AbortSignal.timeout(150_000),
+  });
+
+  let res = await attempt(true);
+  if (res.status === 400) {
+    await res.text().catch(() => '');
+    res = await attempt(false);
+  }
+  if (!res.ok) {
+    const detail = await res.text().catch(() => '');
+    throw new Error(`Google imagen HQ respondió ${res.status}. ${detail.slice(0, 240)}`);
+  }
+  const data = await res.json();
+  if (data?.error) {
+    throw new Error(`El motor de imagen HQ falló: ${JSON.stringify(data.error).slice(0, 240)}`);
+  }
+  // Campo de conveniencia (algunas respuestas lo traen directo)...
+  const direct = data?.output_image;
+  if (direct?.data) {
+    const mime = direct.mime_type || 'image/png';
+    const ext = mime.includes('png') ? 'png' : 'jpg';
+    return { file: { name: `imagen-calili.${ext}`, mime, base64: direct.data } };
+  }
+  // ...y en REST crudo la imagen vive en los steps, como el video.
+  let note: string | undefined;
+  const steps = Array.isArray(data?.steps) ? data.steps : [];
+  for (const step of steps) {
+    const parts = Array.isArray(step?.content) ? step.content : [];
+    for (const part of parts) {
+      if (part?.type === 'image' && typeof part?.data === 'string' && part.data) {
+        const mime = part.mime_type || 'image/png';
+        const ext = mime.includes('png') ? 'png' : 'jpg';
+        return { file: { name: `imagen-calili.${ext}`, mime, base64: part.data }, note };
+      }
+      if (part?.type === 'text' && typeof part?.text === 'string' && !note) {
+        note = part.text.trim().slice(0, 300) || undefined;
+      }
+    }
+  }
+  throw new Error('El motor de imagen HQ no devolvió imagen en su respuesta.');
+}
+
 // --- Video: Veo (asíncrono) -------------------------------------------------
 
 async function fetchFollowingRedirects(url: string): Promise<Buffer> {
@@ -164,7 +233,7 @@ export async function googleVideo(
     body: JSON.stringify({
       model,
       input,
-      response_format: { type: 'video', aspect_ratio: '16:9', resolution: '720p' },
+      response_format: { type: 'video', aspect_ratio: '16:9', resolution: '1080p' },
     }),
     signal: AbortSignal.timeout(270_000),
   });

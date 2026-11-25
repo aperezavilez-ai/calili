@@ -85,6 +85,15 @@ export async function createImage(
   // Cadena de respaldo REAL: si el motor elegido falla (cuota, 5xx,
   // modelo retirado), se cae al siguiente en vez de matar la herramienta.
   if (googleAiKey()) {
+    // Primero la ruta HQ (Nano Banana 2.1, salida 2K); si falla, la
+    // cadena generateContent de siempre hace de respaldo.
+    try {
+      const { googleImageHQ } = await import('@/lib/google-media');
+      const { file, note } = await googleImageHQ(prompt, wantsEdit ? attachedImage : undefined);
+      return { file, engine: wantsEdit ? 'google-edit' : 'google', note };
+    } catch (error) {
+      console.error('Calili: imagen HQ falló, se cae a la cadena anterior', error);
+    }
     try {
       const { googleImage } = await import('@/lib/google-media');
       const { file, note } = await googleImage(prompt, wantsEdit ? attachedImage : undefined);
