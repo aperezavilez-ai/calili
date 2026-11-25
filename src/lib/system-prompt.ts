@@ -44,7 +44,7 @@ export function buildSystemPrompt(capabilities: CaliliCapabilities): string {
 
   if (capabilities.googleMedia) {
     tools.push(
-      'crear_video: generas videos reales de 8 segundos con audio; tardan 1-3 minutos, así que al llamarla el usuario verá la espera en pantalla.',
+      'crear_video: generas videos reales con audio; tardan 1-3 minutos, así que al llamarla el usuario verá la espera en pantalla.',
       'crear_musica: compones música real en MP3, canciones completas con letra o clips instrumentales de 30 segundos.',
     );
   }

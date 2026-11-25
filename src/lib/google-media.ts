@@ -145,59 +145,51 @@ export async function googleVideo(
   prompt: string,
   imageDataUrl?: string,
 ): Promise<{ file: GeneratedFile }> {
-  const model = process.env.GOOGLE_VIDEO_MODEL || 'veo-3.1-fast-generate-preview';
-  const instance: Record<string, unknown> = { prompt };
+  // Google apagó TODOS los IDs Veo de la API de Gemini el 2026-10-22
+  // (veo-3.1-*-generate-preview devuelven 404): el video en esta API lo
+  // genera Gemini Omni Flash por la API de Interactions, con la MISMA
+  // llave y la misma facturación. La llamada es síncrona y el video
+  // vuelve en base64 dentro de la respuesta (sin polling ni descarga).
+  const model = process.env.GOOGLE_VIDEO_MODEL || 'gemini-omni-1.1-flash';
+  const input: unknown[] = [];
   if (imageDataUrl) {
     const img = parseDataUrl(imageDataUrl);
-    if (img) instance.image = { bytesBase64Encoded: img.data, mimeType: img.mime };
+    if (img) input.push({ type: 'image', data: img.data, mime_type: img.mime });
   }
+  input.push({ type: 'text', text: prompt });
 
-  const start = await fetch(`${BASE}/models/${model}:predictLongRunning`, {
+  const res = await fetch(`${BASE}/interactions`, {
     method: 'POST',
     headers: headers(),
     body: JSON.stringify({
-      instances: [instance],
-      parameters: { aspectRatio: '16:9', durationSeconds: 8 },
+      model,
+      input,
+      response_format: { type: 'video', aspect_ratio: '16:9', resolution: '720p' },
     }),
-    signal: AbortSignal.timeout(60000),
+    signal: AbortSignal.timeout(270_000),
   });
-  if (!start.ok) {
-    const detail = await start.text().catch(() => '');
-    throw new Error(`Google Veo respondió ${start.status}. ${detail.slice(0, 240)}`);
+  if (!res.ok) {
+    const detail = await res.text().catch(() => '');
+    throw new Error(`Google Omni respondió ${res.status}. ${detail.slice(0, 240)}`);
   }
-  const opName = (await start.json())?.name as string | undefined;
-  if (!opName) throw new Error('Veo no devolvió operación.');
-
-  const deadline = Date.now() + 240000;
-  let videoUri: string | undefined;
-  while (Date.now() < deadline) {
-    await new Promise((resolve) => setTimeout(resolve, 10000));
-    const poll = await fetch(`${BASE}/${opName}`, {
-      headers: headers(),
-      signal: AbortSignal.timeout(30000),
-    });
-    if (!poll.ok) {
-      // Un 4xx (clave invalida, sin facturacion, permiso) es permanente:
-      // se reporta al instante en vez de reintentar 4 minutos en silencio.
-      if (poll.status >= 400 && poll.status < 500) {
-        const detail = await poll.text().catch(() => '');
-        throw new Error(`Veo respondió ${poll.status}. ${detail.slice(0, 240)}`);
+  const data = await res.json();
+  if (data?.error) {
+    throw new Error(`El motor de video falló: ${JSON.stringify(data.error).slice(0, 240)}`);
+  }
+  // En REST el video vive en los steps: el paso model_output trae una
+  // parte {type:'video', mime_type, data} con el MP4 en base64.
+  const steps = Array.isArray(data?.steps) ? data.steps : [];
+  for (const step of steps) {
+    const parts = Array.isArray(step?.content) ? step.content : [];
+    for (const part of parts) {
+      if (part?.type === 'video' && typeof part?.data === 'string' && part.data) {
+        return {
+          file: { name: 'video-calili.mp4', mime: part.mime_type || 'video/mp4', base64: part.data },
+        };
       }
-      continue;
-    }
-    const op = await poll.json();
-    if (op?.error) throw new Error(`Veo falló: ${JSON.stringify(op.error).slice(0, 240)}`);
-    if (op?.done) {
-      videoUri = op?.response?.generateVideoResponse?.generatedSamples?.[0]?.video?.uri;
-      break;
     }
   }
-  if (!videoUri) throw new Error('El video tardó más de lo esperado y no quedó listo.');
-
-  const buffer = await fetchFollowingRedirects(videoUri);
-  return {
-    file: { name: 'video-calili.mp4', mime: 'video/mp4', base64: buffer.toString('base64') },
-  };
+  throw new Error('El motor de video no devolvió video en su respuesta.');
 }
 
 // --- Música: Lyria -----------------------------------------------------------

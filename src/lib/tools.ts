@@ -89,7 +89,7 @@ export function toolDefinitions(caps: ToolCapabilities) {
       function: {
         name: 'crear_video',
         description:
-          'Crea un VIDEO real de 8 segundos con audio y se lo muestra al usuario con reproductor y descarga. Tarda entre 1 y 3 minutos en generarse. Úsala cuando pida un video, un clip, una animación o mover una imagen. Escribe la descripción en INGLÉS, muy detallada: escena, movimiento de cámara, acción, ambiente y sonido. Si adjuntó una imagen y quiere animarla, marca usar_adjunta=true.',
+          'Crea un VIDEO real con audio y se lo muestra al usuario con reproductor y descarga. Tarda entre 1 y 3 minutos en generarse. Úsala cuando pida un video, un clip, una animación o mover una imagen. Escribe la descripción en INGLÉS, muy detallada: escena, movimiento de cámara, acción, ambiente y sonido. Si adjuntó una imagen y quiere animarla, marca usar_adjunta=true.',
         parameters: {
           type: 'object',
           properties: {
@@ -314,7 +314,7 @@ export async function executeTool(name: string, rawArgs: string, context?: { ima
           args.usar_adjunta ? context?.images?.[0] : undefined,
         );
         return {
-          resultForModel: 'Video creado (8 segundos, con audio): ya se le mostró al usuario con reproductor y botón de descarga. Confírmalo en una frase breve y sin mencionar motores ni proveedores.',
+          resultForModel: 'Video creado (con audio): ya se le mostró al usuario con reproductor y botón de descarga. Confírmalo en una frase breve y sin mencionar motores ni proveedores.',
           file: result.file,
         };
       }
