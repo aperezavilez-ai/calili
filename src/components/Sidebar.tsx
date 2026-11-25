@@ -16,8 +16,13 @@ interface BeforeInstallPromptEvent extends Event {
 
 function usePwaInstall() {
   const [installEvent, setInstallEvent] = useState<BeforeInstallPromptEvent | null>(null);
+  const [isStandalone, setIsStandalone] = useState(false);
 
   useEffect(() => {
+    setIsStandalone(
+      window.matchMedia('(display-mode: standalone)').matches
+      || (window.navigator as unknown as { standalone?: boolean }).standalone === true,
+    );
     const handleBeforeInstall = (event: Event) => {
       event.preventDefault();
       setInstallEvent(event as BeforeInstallPromptEvent);
@@ -39,7 +44,7 @@ function usePwaInstall() {
     if (choice.outcome === 'accepted') setInstallEvent(null);
   };
 
-  return { canInstall: Boolean(installEvent), install };
+  return { canInstall: Boolean(installEvent), install, isStandalone };
 }
 
 function useIosInstallHint() {
@@ -73,7 +78,7 @@ export function Sidebar({ userEmail, onSignOut }: { userEmail?: string; onSignOu
   const [showSettings, setShowSettings] = useState(false);
 
   const { voiceEnabled, voiceGender, setVoiceEnabled, setVoiceGender } = useSettingsStore();
-  const { canInstall, install } = usePwaInstall();
+  const { canInstall, install, isStandalone } = usePwaInstall();
   const showIosInstall = useIosInstallHint();
   const [iosHintOpen, setIosHintOpen] = useState(false);
   const asideTouchX = useRef<number | null>(null);
@@ -191,7 +196,7 @@ export function Sidebar({ userEmail, onSignOut }: { userEmail?: string; onSignOu
           >
             <Settings className="w-5 h-5" />
           </button>
-          {(canInstall || showIosInstall) && (
+          {!isStandalone && (
             <button
               onClick={() => { if (canInstall) { void install(); } else { setIosHintOpen((v) => !v); } }}
               className="p-2 rounded-lg hover:bg-chat-hover transition-colors text-cyan-300"
@@ -203,13 +208,23 @@ export function Sidebar({ userEmail, onSignOut }: { userEmail?: string; onSignOu
           )}
         </div>
 
-        {iosHintOpen && (
-          <div className="mb-4 p-4 rounded-lg bg-cyan-500/10 border border-cyan-300/20 space-y-2 text-sm text-white/80">
-            <p className="font-semibold text-cyan-200">Instalar Calili en iPhone</p>
-            <p>1. Toca el botón <strong>Compartir</strong> de Safari (el cuadro con la flecha hacia arriba).</p>
-            <p>2. Elige <strong>«Agregar a pantalla de inicio»</strong>.</p>
-            <p>3. Toca <strong>Agregar</strong>. Calili queda con su icono, a pantalla completa, y se actualiza sola con cada despliegue.</p>
-          </div>
+        {iosHintOpen && !isStandalone && (
+          showIosInstall ? (
+            <div className="mb-4 p-4 rounded-lg bg-cyan-500/10 border border-cyan-300/20 space-y-2 text-sm text-white/80">
+              <p className="font-semibold text-cyan-200">Instalar Calili en iPhone</p>
+              <p>1. Toca el botón <strong>Compartir</strong> de Safari (el cuadro con la flecha hacia arriba).</p>
+              <p>2. Elige <strong>«Agregar a pantalla de inicio»</strong>.</p>
+              <p>3. Toca <strong>Agregar</strong>. Calili queda con su icono, a pantalla completa, y se actualiza sola con cada despliegue.</p>
+            </div>
+          ) : (
+            <div className="mb-4 p-4 rounded-lg bg-cyan-500/10 border border-cyan-300/20 space-y-2 text-sm text-white/80">
+              <p className="font-semibold text-cyan-200">Instalar Calili en Android</p>
+              <p>1. Toca el menú <strong>⋮</strong> de Chrome, arriba a la derecha.</p>
+              <p>2. Elige <strong>«Instalar app»</strong> o <strong>«Agregar a pantalla de inicio»</strong>.</p>
+              <p>3. Confirma con <strong>Instalar</strong>. Calili queda con su icono, a pantalla completa, y se actualiza sola con cada despliegue.</p>
+              <p className="text-white/50">Si abriste el enlace dentro de otra app (WhatsApp, Facebook), primero ábrelo en Chrome: desde esos navegadores internos no se puede instalar.</p>
+            </div>
+          )
         )}
 
         {/* Panel de configuración de voz */}

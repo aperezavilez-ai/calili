@@ -9,10 +9,10 @@ interface BeforeInstallPromptEvent extends Event {
 }
 
 const DISMISS_KEY = 'calili-install-dismissed';
-const DISMISS_DAYS = 7;
+const DISMISS_DAYS = 1;
 
 export function InstallBanner() {
-  const [mode, setMode] = useState<'hidden' | 'android' | 'ios'>('hidden');
+  const [mode, setMode] = useState<'hidden' | 'android' | 'android-manual' | 'ios'>('hidden');
   const [installEvent, setInstallEvent] = useState<BeforeInstallPromptEvent | null>(null);
   const [showSteps, setShowSteps] = useState(false);
 
@@ -38,7 +38,15 @@ export function InstallBanner() {
     const handleInstalled = () => setMode('hidden');
     window.addEventListener('beforeinstallprompt', handleBeforeInstall);
     window.addEventListener('appinstalled', handleInstalled);
+    // Si Chrome no ofrece la instalacion por su cuenta (llega poca
+    // senal de uso, o la pagina se abrio dentro de otra app), el aviso
+    // aparece igual con los pasos del menu del navegador: la puerta de
+    // instalacion no depende de que el evento se dispare.
+    const fallback = window.setTimeout(() => {
+      setMode((current) => (current === 'hidden' ? 'android-manual' : current));
+    }, 2500);
     return () => {
+      window.clearTimeout(fallback);
       window.removeEventListener('beforeinstallprompt', handleBeforeInstall);
       window.removeEventListener('appinstalled', handleInstalled);
     };
@@ -100,6 +108,13 @@ export function InstallBanner() {
             </li>
             <li>2. Elige <strong className="text-white">«Agregar a pantalla de inicio»</strong>.</li>
             <li>3. Toca <strong className="text-white">Agregar</strong> y listo: Calili queda con su icono como cualquier app.</li>
+          </ol>
+        )}
+        {mode === 'android-manual' && showSteps && (
+          <ol className="mt-3 space-y-1.5 text-sm text-white/75">
+            <li>1. Toca el menú <strong className="text-white">⋮</strong> de Chrome, arriba a la derecha.</li>
+            <li>2. Elige <strong className="text-white">«Instalar app»</strong> o <strong className="text-white">«Agregar a pantalla de inicio»</strong>.</li>
+            <li>3. Confirma con <strong className="text-white">Instalar</strong> y listo: Calili queda con su icono como cualquier app.</li>
           </ol>
         )}
       </div>
