@@ -1,8 +1,8 @@
 'use client';
 
 import { Message } from '@/store/chat-store';
-import { User, Copy, Check, RefreshCw, Pencil, Volume2, Square, Loader2 } from 'lucide-react';
-import { useEffect, useRef, useState } from 'react';
+import { User, Copy, Check, RefreshCw, Pencil, Volume2, Square, Loader2, Download } from 'lucide-react';
+import { Fragment, useEffect, useRef, useState } from 'react';
 import { apiFetch } from '@/lib/api-client';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
@@ -10,12 +10,87 @@ import { fixMarkdownTables } from '@/lib/markdown-fix';
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
 import { vscDarkPlus } from 'react-syntax-highlighter/dist/esm/styles/prism';
 
+export interface ChatFile {
+  id: string;
+  name: string;
+  mime: string;
+  base64: string;
+  messageId?: string;
+}
+
 interface MessageListProps {
   messages: Message[];
+  files?: ChatFile[];
   isLoading?: boolean;
   onRegenerate?: () => void;
   onEditMessage?: (messageId: string, newText: string) => void;
   onSuggestion?: (text: string) => void;
+}
+
+function downloadChatFile(file: ChatFile) {
+  const binary = atob(file.base64);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+  const url = URL.createObjectURL(new Blob([bytes], { type: file.mime }));
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = file.name;
+  link.click();
+  window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+// Tarjetas de archivos generados DENTRO del flujo de la conversacion:
+// viven bajo el mensaje que las produjo y suben con el historial, en vez
+// de quedarse pegadas sobre el recuadro de escritura.
+function FileCards({ files }: { files: ChatFile[] }) {
+  if (files.length === 0) return null;
+  return (
+    <div className="flex flex-wrap gap-2 pl-16">
+      {files.map((file) => (
+        file.mime.startsWith('video/') || file.mime.startsWith('audio/') ? (
+          <div key={file.id} className="w-full max-w-md rounded-xl border border-white/10 bg-white/5 p-2">
+            {file.mime.startsWith('video/') ? (
+              <video controls src={`data:${file.mime};base64,${file.base64}`} className="w-full rounded-lg" />
+            ) : (
+              <audio controls src={`data:${file.mime};base64,${file.base64}`} className="w-full" />
+            )}
+            <button
+              onClick={() => downloadChatFile(file)}
+              className="mt-2 flex items-center gap-1.5 px-1 text-sm text-emerald-200 hover:text-emerald-100"
+              title="Descargar archivo"
+            >
+              <Download className="h-4 w-4" /> {file.name}
+            </button>
+          </div>
+        ) : (
+          <button
+            key={file.id}
+            onClick={() => downloadChatFile(file)}
+            className="flex items-center gap-2 rounded-xl border border-emerald-400/30 bg-emerald-500/15 px-3 py-2 text-sm text-emerald-200 hover:bg-emerald-500/25"
+            title="Descargar archivo"
+          >
+            {file.mime.startsWith('image/') ? (
+              <>
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img
+                  src={`data:${file.mime};base64,${file.base64}`}
+                  alt={file.name}
+                  className="h-14 w-14 rounded-lg object-cover"
+                />
+                <span className="flex items-center gap-1.5">
+                  <Download className="h-4 w-4" /> {file.name}
+                </span>
+              </>
+            ) : (
+              <>
+                <Download className="h-4 w-4" /> {file.name}
+              </>
+            )}
+          </button>
+        )
+      ))}
+    </div>
+  );
 }
 
 const SUGGESTIONS: Array<{ title: string; hint: string; prompt: string }> = [
@@ -74,7 +149,7 @@ function CopyButton({ text }: { text: string }) {
 
 const actionBtn = 'rounded-md p-1.5 text-white/50 hover:bg-white/10 hover:text-white disabled:opacity-40';
 
-export function MessageList({ messages, isLoading, onRegenerate, onEditMessage, onSuggestion }: MessageListProps) {
+export function MessageList({ messages, files = [], isLoading, onRegenerate, onEditMessage, onSuggestion }: MessageListProps) {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [draft, setDraft] = useState('');
   const [speakingId, setSpeakingId] = useState<string | null>(null);
@@ -117,18 +192,34 @@ export function MessageList({ messages, isLoading, onRegenerate, onEditMessage, 
   const nearBottomRef = useRef(true);
   const audioUrlRef = useRef<string | null>(null);
 
+  const filesCountRef = useRef(0);
   useEffect(() => {
     const container = scrollContainerRef.current;
     if (!container) return;
-    // Solo se persigue el fondo si el usuario YA esta abajo: si subio a
-    // leer el historial durante el streaming, no se le arrastra de vuelta.
-    if (!nearBottomRef.current) return;
+    const filesGrew = files.length > filesCountRef.current;
+    filesCountRef.current = files.length;
+    const last = messages[messages.length - 1];
+    // Scroll FORZADO al fondo en dos momentos: el usuario acaba de
+    // enviar (su mensaje es el ultimo) o acaba de llegar un archivo
+    // generado de su turno. En el resto (el streaming) solo se persigue
+    // el fondo si el usuario YA esta abajo: si subio a leer el
+    // historial, no se le arrastra de vuelta.
+    const force = filesGrew || (last !== undefined && last.role === 'user');
+    if (!force && !nearBottomRef.current) return;
     const frame = window.requestAnimationFrame(() => {
       container.scrollTop = container.scrollHeight;
     });
-
-    return () => window.cancelAnimationFrame(frame);
-  }, [messages]);
+    // Segunda pasada cuando el scroll es forzado: el video o la imagen
+    // terminan de medir su alto un poco despues de montarse y la
+    // primera pasada puede quedarse corta.
+    const settle = force
+      ? window.setTimeout(() => { container.scrollTop = container.scrollHeight; }, 400)
+      : undefined;
+    return () => {
+      window.cancelAnimationFrame(frame);
+      if (settle !== undefined) window.clearTimeout(settle);
+    };
+  }, [messages, files]);
 
   if (messages.length === 0) {
     return (
@@ -169,8 +260,8 @@ export function MessageList({ messages, isLoading, onRegenerate, onEditMessage, 
     <div ref={scrollContainerRef} className="min-h-0 flex-1 overflow-y-auto" onScroll={(e) => { const el = e.currentTarget; nearBottomRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 140; }}>
       <div className="max-w-3xl mx-auto px-4 py-6 space-y-8">
         {messages.map((message, index) => (
+          <Fragment key={message.id}>
           <div
-            key={message.id}
             className={`flex gap-6 ${message.role === 'user' ? 'flex-row-reverse' : 'flex-row'}`}
           >
             {/* Avatar */}
@@ -331,7 +422,10 @@ export function MessageList({ messages, isLoading, onRegenerate, onEditMessage, 
               )}
             </div>
           </div>
+          <FileCards files={files.filter((f) => f.messageId === message.id)} />
+          </Fragment>
         ))}
+        <FileCards files={files.filter((f) => !f.messageId || !messages.some((m) => m.id === f.messageId))} />
       </div>
     </div>
   );

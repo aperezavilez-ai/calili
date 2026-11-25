@@ -219,3 +219,10 @@ Directriz de Luis (2026-11-23): Calili debe crear imágenes desde texto, videos 
 - Migración: googleVideo ahora llama a Gemini Omni Flash (gemini-omni-1.1-flash, override GOOGLE_VIDEO_MODEL) por la API de Interactions (POST /v1beta/interactions, misma llave y misma facturación): input como partes [imagen?, texto], response_format {type:'video', aspect_ratio 16:9, resolution 720p}, llamada síncrona (timeout 270 s) y el MP4 vuelve en base64 en el step model_output de la respuesta. Contrato tomado de la documentación oficial de Google (ai.google.dev/gemini-api/docs/omni).
 - Textos: fuera la promesa de «8 segundos» en la descripción de crear_video, su resultado y el prompt de sistema (Omni decide la duración).
 - Pendiente de juicio en vivo: el mismo pedido del logo; si Omni responde con otro error, la v3.3.4 lo deja escrito en los Runtime Logs.
+
+## v3.3.7 — Las tarjetas viven en la conversación y el chat hace scroll solo
+- HITO PREVIO (2026-11-24 17:29): el PRIMER VIDEO EN VIVO de Calili funcionó — Luis animó su logo con Omni Flash: video de 8 s con reproductor y descarga («video-calili.mp4»). La pierna de video del estudio queda PROBADA EN VIVO.
+- Defecto reportado por Luis el mismo día: la tarjeta del video quedaba en una banda fija sobre el recuadro de escritura, fuera del flujo, y el chat no hacía scroll automático al llegar mensajes/archivos.
+- Corrección: cada archivo generado se ASIGNA al mensaje del asistente de su turno (los eventos {file} llegan durante el turno y se asignan al confirmarse el mensaje; los huérfanos cuyo mensaje se borró se rescatan al final de la lista, nunca se pierden). MessageList pinta las tarjetas bajo su mensaje, con el mismo reproductor/descarga de antes; la banda fija desapareció.
+- Scroll: forzado al fondo cuando el usuario envía y cuando llega un archivo de su turno (con segunda pasada de asentamiento para el alto del video); durante el streaming se sigue respetando a quien subió a leer el historial.
+- Pendiente de juicio en vivo: pedir otro video/archivo y ver la tarjeta subir con la conversación sin tocar el scroll.

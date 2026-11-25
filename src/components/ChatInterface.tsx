@@ -15,7 +15,6 @@ import VoiceMode from '@/components/VoiceMode';
 import { normalizeCaliliResponse } from '@/lib/response-policy';
 import { InstallBanner } from '@/components/InstallBanner';
 import { loadMemoryFacts, saveMemoryFact, removeMemoryFact } from '@/lib/memory-facts';
-import { Download } from 'lucide-react';
 
 export default function ChatInterface() {
   const {
@@ -43,12 +42,53 @@ export default function ChatInterface() {
   // Los archivos generados viven POR conversacion: antes eran un estado
   // global que se borraba al cambiar de chat y la tarjeta de descarga se
   // perdia para siempre.
-  const [filesByConversation, setFilesByConversation] = useState<Record<string, Array<{ id: string; name: string; mime: string; base64: string }>>>({});
+  const [filesByConversation, setFilesByConversation] = useState<Record<string, Array<{ id: string; name: string; mime: string; base64: string; messageId?: string }>>>({});
   const generatedFiles = filesByConversation[currentConversationId ?? ''] ?? [];
+  // Archivos que llegan DURANTE un turno (el evento {file} precede al
+  // texto de cierre): se guardan como pendientes y al confirmarse el
+  // mensaje del asistente se le ASIGNAN, para que su tarjeta viva dentro
+  // de la conversacion, bajo ese mensaje, y suba con el historial en vez
+  // de quedarse pegada sobre el recuadro de escritura.
+  const pendingTurnFilesRef = useRef<Record<string, string[]>>({});
   const addGeneratedFile = (convId: string, file: { name: string; mime: string; base64: string }) => {
+    const record = { id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`, ...file };
     setFilesByConversation((prev) => ({
       ...prev,
-      [convId]: [...(prev[convId] ?? []), { id: `${Date.now()}-${(prev[convId] ?? []).length}`, ...file }],
+      [convId]: [...(prev[convId] ?? []), record],
+    }));
+    pendingTurnFilesRef.current[convId] = [...(pendingTurnFilesRef.current[convId] ?? []), record.id];
+    return record;
+  };
+  const flushPendingFiles = (convId: string) => {
+    const conv = useChatStore.getState().conversations.find((c) => c.id === convId);
+    const msgs = conv?.messages ?? [];
+    let lastAssistantId: string | undefined;
+    for (let i = msgs.length - 1; i >= 0; i--) {
+      if (msgs[i].role === 'assistant') { lastAssistantId = msgs[i].id; break; }
+    }
+    if (!lastAssistantId) return;
+    const existingIds = new Set(msgs.map((m) => m.id));
+    const pending = new Set(pendingTurnFilesRef.current[convId] ?? []);
+    pendingTurnFilesRef.current[convId] = [];
+    if (pending.size === 0) {
+      // Sin pendientes: solo rescata huerfanos si su mensaje ya no existe.
+      setFilesByConversation((prev) => {
+        const list = prev[convId] ?? [];
+        if (!list.some((f) => f.messageId && !existingIds.has(f.messageId))) return prev;
+        return {
+          ...prev,
+          [convId]: list.map((f) => (f.messageId && !existingIds.has(f.messageId) ? { ...f, messageId: lastAssistantId } : f)),
+        };
+      });
+      return;
+    }
+    setFilesByConversation((prev) => ({
+      ...prev,
+      [convId]: (prev[convId] ?? []).map((f) =>
+        pending.has(f.id) || (f.messageId && !existingIds.has(f.messageId))
+          ? { ...f, messageId: lastAssistantId }
+          : f,
+      ),
     }));
   };
   const [streamingConvId, setStreamingConvId] = useState<string | null>(null);
@@ -162,18 +202,6 @@ export default function ChatInterface() {
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
-
-  const downloadToolFile = (file: { name: string; mime: string; base64: string }) => {
-    const binary = atob(file.base64);
-    const bytes = new Uint8Array(binary.length);
-    for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
-    const url = URL.createObjectURL(new Blob([bytes], { type: file.mime }));
-    const link = document.createElement('a');
-    link.href = url;
-    link.download = file.name;
-    link.click();
-    window.setTimeout(() => URL.revokeObjectURL(url), 1000);
-  };
 
   const signOut = async () => {
     await supabase?.auth.signOut();
@@ -363,6 +391,7 @@ export default function ChatInterface() {
         });
       }
     } finally {
+      if (convId) flushPendingFiles(convId);
       setLoading(false);
       setStreamingConvId(null);
     }
@@ -401,6 +430,7 @@ export default function ChatInterface() {
         addMessage(conv.id, { role: 'assistant', content: `❌ **Error:** ${errorMessage || 'No se pudo conectar con la API'}` });
       }
     } finally {
+      flushPendingFiles(conv.id);
       setLoading(false);
       setStreamingConvId(null);
     }
@@ -424,6 +454,7 @@ export default function ChatInterface() {
     const convId = useChatStore.getState().currentConversationId;
     if (partial && convId) {
       addMessage(convId, { role: 'assistant', content: `${partial}\n\n*(Respuesta detenida por ti)*` });
+      flushPendingFiles(convId);
     }
     partialContentRef.current = '';
     setStreamingContent('');
@@ -468,63 +499,14 @@ export default function ChatInterface() {
     >
       <Sidebar userEmail={userEmail} onSignOut={signOut} />
       <main className="flex-1 flex flex-col min-h-0 min-w-0 w-full">
-        <MessageList messages={displayMessages} isLoading={isLoading} onRegenerate={handleRegenerate} onEditMessage={handleEditMessage} onSuggestion={(text) => void handleSendMessage(text)} />
-        {generatedFiles.length > 0 && (
-          <div className="border-t border-white/10 bg-chat-bg px-4 py-3">
-            <div className="mx-auto flex max-w-3xl flex-wrap gap-2">
-              {generatedFiles.map((file) => (
-                file.mime.startsWith('video/') || file.mime.startsWith('audio/') ? (
-                  <div key={file.id} className="w-full max-w-md rounded-xl border border-white/10 bg-white/5 p-2">
-                    {file.mime.startsWith('video/') ? (
-                      <video controls src={`data:${file.mime};base64,${file.base64}`} className="w-full rounded-lg" />
-                    ) : (
-                      <audio controls src={`data:${file.mime};base64,${file.base64}`} className="w-full" />
-                    )}
-                    <button
-                      onClick={() => downloadToolFile(file)}
-                      className="mt-2 flex items-center gap-1.5 px-1 text-sm text-emerald-200 hover:text-emerald-100"
-                      title="Descargar archivo"
-                    >
-                      <Download className="h-4 w-4" /> {file.name}
-                    </button>
-                  </div>
-                ) : (
-                <button
-                  key={file.id}
-                  onClick={() => downloadToolFile(file)}
-                  className="flex items-center gap-2 rounded-xl border border-emerald-400/30 bg-emerald-500/15 px-3 py-2 text-sm text-emerald-200 hover:bg-emerald-500/25"
-                  title="Descargar archivo"
-                >
-                  {file.mime.startsWith('image/') ? (
-                    <>
-                      {/* eslint-disable-next-line @next/next/no-img-element */}
-                      <img
-                        src={`data:${file.mime};base64,${file.base64}`}
-                        alt={file.name}
-                        className="h-14 w-14 rounded-lg object-cover"
-                      />
-                      <span className="flex items-center gap-1.5">
-                        <Download className="h-4 w-4" /> {file.name}
-                      </span>
-                    </>
-                  ) : (
-                    <>
-                      <Download className="h-4 w-4" /> {file.name}
-                    </>
-                  )}
-                </button>
-                )
-              ))}
-            </div>
-          </div>
-        )}
+        <MessageList messages={displayMessages} files={generatedFiles} isLoading={isLoading} onRegenerate={handleRegenerate} onEditMessage={handleEditMessage} onSuggestion={(text) => void handleSendMessage(text)} />
         <InstallBanner />
         <InputBox onSendMessage={handleSendMessage} onStopMessage={stopResponse} isLoading={isLoading} onVoiceMode={() => setVoiceModeOpen(true)} />
       </main>
       {voiceModeOpen && (
         <VoiceMode
           onClose={() => setVoiceModeOpen(false)}
-          onFile={(file) => { const cid = useChatStore.getState().currentConversationId; if (cid) addGeneratedFile(cid, file); }}
+          onFile={(file) => { const cid = useChatStore.getState().currentConversationId; if (cid) { addGeneratedFile(cid, file); flushPendingFiles(cid); } }}
         />
       )}
     </div>
