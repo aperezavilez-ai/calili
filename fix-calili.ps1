@@ -1,0 +1,595 @@
+# =====================================================================
+#  CALILI — Script de correcciones (Versión Final Blindada)
+# =====================================================================
+
+$ErrorActionPreference = "Stop"
+$repoPath = "D:\PROGRAMAS IA\CALILI"
+
+if (-not (Test-Path $repoPath)) {
+    Write-Host "✗ No existe la ruta: $repoPath" -ForegroundColor Red
+    exit 1
+}
+Set-Location $repoPath
+Write-Host "==> Repo: $(Get-Location)" -ForegroundColor Cyan
+
+# ---------- Helper ----------
+function Write-File {
+    param([string]$Path, [string[]]$Lines)
+    $full = Join-Path $repoPath $Path
+    $parent = Split-Path $full -Parent
+    if (-not (Test-Path $parent)) {
+        New-Item -ItemType Directory -Path $parent -Force | Out-Null
+    }
+    # Une con LF (saltos de línea Unix) para que GitHub Actions y Husky no fallen
+    $content = $Lines -join "`n"
+    [System.IO.File]::WriteAllText($full, $content, (New-Object System.Text.UTF8Encoding $false))
+    Write-Host "  [+] $Path" -ForegroundColor Green
+}
+
+try {
+    Write-Host "-- Creando carpetas --" -ForegroundColor Cyan
+    @(".github", ".github\workflows", ".husky", "src\lib\__tests__", "_backup_before_fix") | ForEach-Object {
+        if (-not (Test-Path $_)) { New-Item -ItemType Directory -Path $_ -Force | Out-Null }
+    }
+
+    Write-Host "-- Respaldando archivos --" -ForegroundColor Cyan
+    @(".eslintrc.json", "package.json", "next.config.js", ".gitignore", "README.md") | ForEach-Object {
+        if (Test-Path $_) { Copy-Item $_ "_backup_before_fix\$_.bak" -Force }
+    }
+
+    Write-Host "-- Escribiendo archivos --" -ForegroundColor Cyan
+
+    Write-File ".github\workflows\ci.yml" @(
+        'name: CI',
+        '',
+        'on:',
+        '  push:',
+        '    branches: [main, develop]',
+        '  pull_request:',
+        '    branches: [main, develop]',
+        '',
+        'concurrency:',
+        '  group: ci-${{ github.ref }}',
+        '  cancel-in-progress: true',
+        '',
+        'jobs:',
+        '  quality:',
+        '    name: Lint · Typecheck · Test · Build',
+        '    runs-on: ubuntu-latest',
+        '    timeout-minutes: 20',
+        '',
+        '    steps:',
+        '      - name: Checkout',
+        '        uses: actions/checkout@v4',
+        '',
+        '      - name: Setup Node',
+        '        uses: actions/setup-node@v4',
+        '        with:',
+        "          node-version: '20'",
+        "          cache: 'npm'",
+        '',
+        '      - name: Install dependencies',
+        '        run: npm ci',
+        '',
+        '      - name: Lint',
+        '        run: npm run lint',
+        '',
+        '      - name: Type check',
+        '        run: npx tsc --noEmit',
+        '',
+        '      - name: Prettier check',
+        '        run: npm run format:check',
+        '',
+        '      - name: Tests',
+        '        run: npm run test',
+        '        env:',
+        '          NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}',
+        '          NEXT_PUBLIC_SUPABASE_ANON_KEY: ${{ secrets.NEXT_PUBLIC_SUPABASE_ANON_KEY }}',
+        '',
+        '      - name: Build',
+        '        run: npm run build',
+        '        env:',
+        '          NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}',
+        '          NEXT_PUBLIC_SUPABASE_ANON_KEY: ${{ secrets.NEXT_PUBLIC_SUPABASE_ANON_KEY }}',
+        '          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}'
+    )
+
+    Write-File ".github\dependabot.yml" @(
+        'version: 2',
+        'updates:',
+        "  - package-ecosystem: 'npm'",
+        "    directory: '/'",
+        '    schedule:',
+        "      interval: 'weekly'",
+        "      day: 'monday'",
+        '    open-pull-requests-limit: 5',
+        '    groups:',
+        '      minor-and-patch:',
+        '        applies-to: version-updates',
+        "        update-types: ['minor', 'patch']",
+        '',
+        "  - package-ecosystem: 'github-actions'",
+        "    directory: '/'",
+        '    schedule:',
+        "      interval: 'monthly'"
+    )
+
+    Write-File "jest.config.ts" @(
+        "import type { Config } from 'jest';",
+        "import nextJest from 'next/jest.js';",
+        '',
+        "const createJestConfig = nextJest({ dir: './' });",
+        '',
+        'const config: Config = {',
+        "  testEnvironment: 'jsdom',",
+        "  setupFilesAfterEnv: ['<rootDir>/jest.setup.ts'],",
+        '  moduleNameMapper: {',
+        "    '^@/(.*)$': '<rootDir>/src/`$1',",
+        '  },',
+        "  testPathIgnorePatterns: ['/node_modules/', '/.next/', '/e2e/'],",
+        '  collectCoverageFrom: [',
+        "    'src/**/*.{ts,tsx}',",
+        "    '!src/**/*.d.ts',",
+        "    '!src/**/layout.tsx',",
+        "    '!src/**/page.tsx',",
+        '  ],',
+        '  coverageThreshold: {',
+        '    global: { branches: 40, functions: 40, lines: 40, statements: 40 },',
+        '  },',
+        '  clearMocks: true,',
+        '  verbose: true,',
+        '};',
+        '',
+        'export default createJestConfig(config);'
+    )
+
+    Write-File "jest.setup.ts" @(
+        "import '@testing-library/jest-dom';"
+    )
+
+    Write-File "src\lib\__tests__\api-auth.test.ts" @(
+        "import { NextRequest } from 'next/server';",
+        "import { requireApiUser, isErrorResponse } from '../api-auth';",
+        '',
+        'const makeReq = (token?: string) => {',
+        '  const headers: Record<string, string> = {};',
+        '  if (token) headers.authorization = `Bearer ${token}`;',
+        "  return new NextRequest('http://localhost/api/chat', { headers });",
+        '};',
+        '',
+        "describe('requireApiUser', () => {",
+        '  const OLD_ENV = process.env;',
+        '',
+        '  beforeEach(() => {',
+        '    jest.resetModules();',
+        '    process.env = { ...OLD_ENV };',
+        '  });',
+        '',
+        '  afterAll(() => {',
+        '    process.env = OLD_ENV;',
+        '  });',
+        '',
+        "  it('rechaza sin token en producción con Supabase configurado', async () => {",
+        "    process.env.NODE_ENV = 'production';",
+        "    process.env.NEXT_PUBLIC_SUPABASE_URL = 'https://example.supabase.co';",
+        "    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY = 'anon-key';",
+        '    const res = await requireApiUser(makeReq());',
+        '    expect(isErrorResponse(res)).toBe(true);',
+        '    if (isErrorResponse(res)) expect(res.status).toBe(401);',
+        '  });',
+        '',
+        "  it('devuelve 503 en producción sin variables de Supabase', async () => {",
+        "    process.env.NODE_ENV = 'production';",
+        '    delete process.env.NEXT_PUBLIC_SUPABASE_URL;',
+        '    delete process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;',
+        '',
+        '    await jest.isolateModulesAsync(async () => {',
+        "      const mod = await import('../api-auth');",
+        "      const res = await mod.requireApiUser(makeReq('tok'));",
+        '      expect(mod.isErrorResponse(res)).toBe(true);',
+        '      if (mod.isErrorResponse(res)) expect(res.status).toBe(503);',
+        '    });',
+        '  });',
+        '});'
+    )
+
+    Write-File ".eslintrc.json" @(
+        '{',
+        '  "extends": [',
+        '    "next/core-web-vitals",',
+        '    "plugin:import/recommended",',
+        '    "plugin:jsx-a11y/recommended",',
+        '    "plugin:security/recommended",',
+        '    "prettier"',
+        '  ],',
+        '  "plugins": ["import", "jsx-a11y", "security"],',
+        '  "rules": {',
+        '    "no-console": ["warn", { "allow": ["warn", "error"] }],',
+        '    "@typescript-eslint/no-explicit-any": "warn",',
+        '    "@typescript-eslint/no-unused-vars": [',
+        '      "warn",',
+        '      { "argsIgnorePattern": "^_", "varsIgnorePattern": "^_" }',
+        '    ],',
+        '    "import/order": [',
+        '      "warn",',
+        '      {',
+        '        "groups": [',
+        '          "builtin",',
+        '          "external",',
+        '          "internal",',
+        '          "parent",',
+        '          "sibling",',
+        '          "index"',
+        '        ],',
+        '        "alphabetize": { "order": "asc", "caseInsensitive": true },',
+        '        "newlines-between": "always"',
+        '      }',
+        '    ],',
+        '    "security/detect-object-injection": "off"',
+        '  },',
+        '  "ignorePatterns": ["node_modules", ".next", "coverage", "public/sw.js"]',
+        '}'
+    )
+
+    Write-File ".prettierrc" @(
+        '{',
+        '  "semi": true,',
+        '  "singleQuote": true,',
+        '  "trailingComma": "es5",',
+        '  "printWidth": 100,',
+        '  "tabWidth": 2,',
+        '  "useTabs": false,',
+        '  "bracketSpacing": true,',
+        '  "arrowParens": "always",',
+        '  "endOfLine": "lf"',
+        '}'
+    )
+
+    Write-File ".prettierignore" @(
+        '.next',
+        'node_modules',
+        'dist',
+        'build',
+        'coverage',
+        'public',
+        '_legacy_sql',
+        '_backup_before_fix',
+        '*.min.js',
+        '*.min.css',
+        'package-lock.json'
+    )
+
+    Write-File ".husky\pre-commit" @(
+        'npx lint-staged'
+    )
+
+    Write-File "LICENSE" @(
+        'MIT License',
+        '',
+        'Copyright (c) 2026 aperezavilez-ai',
+        '',
+        'Permission is hereby granted, free of charge, to any person obtaining a copy',
+        'of this software and associated documentation files (the "Software"), to deal',
+        'in the Software without restriction, including without limitation the rights',
+        'to use, copy, modify, merge, publish, distribute, sublicense, and/or sell',
+        'copies of the Software, and to permit persons to whom the Software is',
+        'furnished to do so, subject to the following conditions:',
+        '',
+        'The above copyright notice and this permission notice shall be included in all',
+        'copies or substantial portions of the Software.',
+        '',
+        'THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR',
+        'IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,',
+        'FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE',
+        'AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER',
+        'LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,',
+        'OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE',
+        'SOFTWARE.'
+    )
+
+    Write-File "src\lib\api-auth.ts" @(
+        "import { createClient } from '@supabase/supabase-js';",
+        "import { NextRequest, NextResponse } from 'next/server';",
+        '',
+        'const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL;',
+        'const SUPABASE_ANON_KEY = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;',
+        '',
+        "const isProd = process.env.NODE_ENV === 'production';",
+        'const configMissing = !SUPABASE_URL || !SUPABASE_ANON_KEY;',
+        'const apiAuthEnabled = !configMissing || !isProd;',
+        '',
+        'export type ApiUser = { userId: string; email?: string };',
+        '',
+        'export async function requireApiUser(',
+        '  req: NextRequest',
+        '): Promise<ApiUser | NextResponse> {',
+        '  if (!apiAuthEnabled) {',
+        '    return NextResponse.json(',
+        '      {',
+        "        error: 'Server misconfigured: Supabase credentials are required in production.',",
+        '      },',
+        '      { status: 503 }',
+        '    );',
+        '  }',
+        '',
+        '  if (!SUPABASE_URL || !SUPABASE_ANON_KEY) {',
+        "    return { userId: 'local' };",
+        '  }',
+        '',
+        "  const authHeader = req.headers.get('authorization') ?? '';",
+        "  const token = authHeader.startsWith('Bearer ')",
+        '    ? authHeader.slice(7).trim()',
+        "    : '';",
+        '',
+        '  if (!token) {',
+        '    return NextResponse.json(',
+        "      { error: 'Missing Bearer token' },",
+        '      { status: 401 }',
+        '    );',
+        '  }',
+        '',
+        '  const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {',
+        '    global: { headers: { Authorization: `Bearer ${token}` } },',
+        '    auth: { persistSession: false, autoRefreshToken: false },',
+        '  });',
+        '',
+        '  const { data, error } = await supabase.auth.getUser(token);',
+        '  if (error || !data?.user) {',
+        '    return NextResponse.json(',
+        "      { error: 'Invalid or expired token' },",
+        '      { status: 401 }',
+        '    );',
+        '  }',
+        '',
+        '  return { userId: data.user.id, email: data.user.email ?? undefined };',
+        '}',
+        '',
+        'export function isErrorResponse(x: unknown): x is NextResponse {',
+        '  return x instanceof NextResponse;',
+        '}'
+    )
+
+    Write-File "next.config.js" @(
+        "const withPWA = require('@ducanh2912/next-pwa').default({",
+        "  dest: 'public',",
+        '  cacheOnFrontEndNav: true,',
+        '  aggressiveFrontEndNavCaching: true,',
+        '  reloadOnOnline: true,',
+        "  disable: process.env.NODE_ENV === 'development',",
+        '  workboxOptions: {',
+        '    disableDevLogs: true,',
+        '  },',
+        '});',
+        '',
+        "/** @type {import(''next'').NextConfig} */",
+        'const nextConfig = {',
+        '  reactStrictMode: true,',
+        '  // IMPORTANTE: si tu next.config.js tenía más opciones, recupéralas desde _backup_before_fix',
+        '};',
+        '',
+        'module.exports = withPWA(nextConfig);'
+    )
+
+    Write-File ".gitignore" @(
+        '# Dependencies',
+        'node_modules/',
+        '.pnp',
+        '.pnp.js',
+        '',
+        '# Next.js',
+        '.next/',
+        'out/',
+        'build/',
+        'dist/',
+        '',
+        '# Testing',
+        'coverage/',
+        '.nyc_output/',
+        '*.lcov',
+        '',
+        '# PWA generated files',
+        'public/sw.js',
+        'public/sw.js.map',
+        'public/workbox-*.js',
+        'public/workbox-*.js.map',
+        'public/worker-*.js',
+        'public/worker-*.js.map',
+        'public/fallback-*.js',
+        '',
+        '# Environment',
+        '.env',
+        '.env*.local',
+        '.env.production',
+        '',
+        '# Backups y migraciones antiguas',
+        '_backup_before_fix/',
+        '_legacy_sql/',
+        '',
+        '# Logs',
+        'npm-debug.log*',
+        'yarn-debug.log*',
+        'yarn-error.log*',
+        '*.log',
+        '',
+        '# Editor / OS',
+        '.vscode/*',
+        '!.vscode/extensions.json',
+        '.idea/',
+        '.DS_Store',
+        'Thumbs.db',
+        '',
+        '# TypeScript',
+        '*.tsbuildinfo',
+        'next-env.d.ts',
+        '',
+        '# Vercel',
+        '.vercel',
+        '',
+        '# Supabase local',
+        'supabase/.branches',
+        'supabase/.temp'
+    )
+
+    Write-File "README.md" @(
+        '# Calili',
+        '',
+        'Aplicación web (Next.js 14 + Supabase) para [describe brevemente el producto].',
+        '',
+        '## Stack',
+        '',
+        '- **Framework:** Next.js 14 (App Router)',
+        '- **Lenguaje:** TypeScript',
+        '- **Estilos:** Tailwind CSS',
+        '- **Base de datos / Auth:** Supabase',
+        '- **PWA:** @ducanh2912/next-pwa',
+        '- **Testing:** Jest + Testing Library + Playwright',
+        '',
+        '## Requisitos',
+        '',
+        '- Node.js >= 20',
+        '- npm >= 10',
+        '- Cuenta de Supabase (o instancia self-hosted)',
+        '',
+        '## Instalación',
+        '',
+        '```bash',
+        'git clone https://github.com/aperezavilez-ai/calili.git',
+        'cd calili',
+        'npm ci',
+        '```',
+        '',
+        '## Variables de entorno',
+        '',
+        'Crea `.env.local` en la raíz:',
+        '',
+        '```env',
+        'NEXT_PUBLIC_SUPABASE_URL=https://<tu-proyecto>.supabase.co',
+        'NEXT_PUBLIC_SUPABASE_ANON_KEY=<tu-anon-key>',
+        'SUPABASE_SERVICE_ROLE_KEY=<tu-service-role-key>',
+        '```',
+        '',
+        '> En producción estas variables son **obligatorias**. Si faltan, la API responde `503`.',
+        '',
+        '## Desarrollo',
+        '',
+        '```bash',
+        'npm run dev',
+        '```',
+        '',
+        'Abre http://localhost:3000',
+        '',
+        '## Scripts',
+        '',
+        '| Comando | Descripción |',
+        '|---|---|',
+        '| `npm run dev` | Servidor de desarrollo |',
+        '| `npm run build` | Build de producción |',
+        '| `npm run start` | Servir build de producción |',
+        '| `npm run lint` | ESLint |',
+        '| `npm run format` | Prettier (escribe) |',
+        '| `npm run format:check` | Prettier (verifica) |',
+        '| `npm test` | Tests unitarios |',
+        '| `npm run test:coverage` | Tests con cobertura |',
+        '| `npm run test:e2e` | Tests E2E (Playwright) |',
+        '',
+        '## Base de datos',
+        '',
+        'Todos los cambios de esquema están versionados en `supabase/migrations/`.',
+        '',
+        '```bash',
+        'npx supabase db reset    # local',
+        'npx supabase db push     # remoto',
+        '```',
+        '',
+        '## Calidad y CI',
+        '',
+        '- **Husky** ejecuta `lint-staged` antes de cada commit.',
+        '- **GitHub Actions** valida lint, typecheck, tests y build en cada push/PR.',
+        '- **Dependabot** revisa dependencias semanalmente.',
+        '',
+        '## Troubleshooting',
+        '',
+        '**`Server misconfigured: Supabase credentials are required in production`**',
+        'Faltan `NEXT_PUBLIC_SUPABASE_URL` o `NEXT_PUBLIC_SUPABASE_ANON_KEY`.',
+        '',
+        '**`Missing Bearer token`**',
+        'El cliente debe enviar `Authorization: Bearer <jwt>` en cada request a `/api/*`.',
+        '',
+        '## Licencia',
+        '',
+        'MIT — ver [LICENSE](./LICENSE).'
+    )
+
+    Write-File "package.json" @(
+        '{',
+        '  "name": "calili",',
+        '  "version": "3.3.9",',
+        '  "private": true,',
+        '  "scripts": {',
+        '    "dev": "next dev",',
+        '    "build": "next build",',
+        '    "start": "next start",',
+        '    "lint": "next lint",',
+        '    "format": "prettier --write .",',
+        '    "format:check": "prettier --check .",',
+        '    "test": "jest",',
+        '    "test:watch": "jest --watch",',
+        '    "test:coverage": "jest --coverage",',
+        '    "test:e2e": "playwright test",',
+        '    "prepare": "husky"',
+        '  },',
+        '  "dependencies": {',
+        '    "@ducanh2912/next-pwa": "^10.2.9",',
+        '    "@supabase/supabase-js": "^2.45.0",',
+        '    "next": "14.2.5",',
+        '    "react": "^18.3.1",',
+        '    "react-dom": "^18.3.1",',
+        '    "react-markdown": "^9.0.1"',
+        '  },',
+        '  "devDependencies": {',
+        '    "@playwright/test": "^1.47.0",',
+        '    "@testing-library/jest-dom": "^6.5.0",',
+        '    "@testing-library/react": "^16.0.1",',
+        '    "@testing-library/user-event": "^14.5.2",',
+        '    "@types/jest": "^29.5.12",',
+        '    "@types/node": "^20.14.0",',
+        '    "@types/react": "^18.3.3",',
+        '    "@types/react-dom": "^18.3.0",',
+        '    "eslint": "^8.57.0",',
+        '    "eslint-config-next": "14.2.5",',
+        '    "eslint-config-prettier": "^9.1.0",',
+        '    "eslint-plugin-import": "^2.29.1",',
+        '    "eslint-plugin-jsx-a11y": "^6.9.0",',
+        '    "eslint-plugin-security": "^3.0.1",',
+        '    "husky": "^9.1.4",',
+        '    "jest": "^29.7.0",',
+        '    "jest-environment-jsdom": "^29.7.0",',
+        '    "lint-staged": "^15.2.9",',
+        '    "prettier": "^3.3.3",',
+        '    "ts-jest": "^29.2.4",',
+        '    "typescript": "^5.5.4"',
+        '  },',
+        '  "lint-staged": {',
+        '    "*.{ts,tsx,js,jsx}": ["eslint --fix", "prettier --write"],',
+        '    "*.{json,css,md,yml,yaml}": ["prettier --write"]',
+        '  }',
+        '}'
+    )
+
+    Write-Host "-- Ejecutando npm install (esto puede tardar un poco) --" -ForegroundColor Cyan
+    npm install
+    if ($LASTEXITCODE -ne 0) { throw "npm install falló." }
+
+    try { git update-index --add --chmod=+x .husky/pre-commit 2>$null | Out-Null } catch { }
+
+    Write-Host ""
+    Write-Host "==============================================" -ForegroundColor Green
+    Write-Host " ✓ COMPLETADO EXITOSAMENTE" -ForegroundColor Green
+    Write-Host "==============================================" -ForegroundColor Green
+    Write-Host "Backups guardados en: _backup_before_fix\" -ForegroundColor DarkYellow
+    Write-Host "Recuerda revisar el package.json.bak para añadir tus dependencias extra." -ForegroundColor DarkYellow
+}
+catch {
+    Write-Host "✗ ERROR: $_" -ForegroundColor Red
+    exit 1
+}

@@ -3,16 +3,10 @@
   "projectName": "Calili",
   "projectSlug": "calili",
   "isolationMode": "dedicated_supabase",
-  "supabase": {
-    "url": "https://supabase.gafcore.com/calili",
-    "instanceId": "calili",
-    "database": "postgres",
-    "schema": "calili"
-  },
   "deployment": {
     "platform": "vercel",
-    "github": "aperezavilez/calili",
     "domain": "calili.vercel.app"
   },
-  "isolation": "dedicated"
+  "isolation": "dedicated",
+  "notes": "Datos sensibles (URLs internas, usuarios) eliminados. Configura Supabase vía variables de entorno."
 }

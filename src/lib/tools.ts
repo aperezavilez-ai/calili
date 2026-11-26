@@ -13,9 +13,13 @@ export interface ToolCapabilities {
   readRepos: boolean;
   imageGen: boolean;
   imageEdit: boolean;
+  preciseEdit: boolean;
+  utilities: boolean;
   memory: boolean;
   googleMedia: boolean;
   avatarService: boolean;
+  imageTools: boolean;
+  narration: boolean;
 }
 
 export function toolCapabilities(): ToolCapabilities {
@@ -25,9 +29,16 @@ export function toolCapabilities(): ToolCapabilities {
     readRepos: true,
     imageGen: true,
     imageEdit: Boolean(process.env.OPENAI_API_KEY) || Boolean(googleAiKey()),
+    preciseEdit: Boolean(googleAiKey()),
+    utilities: true,
     memory: true,
     googleMedia: Boolean(googleAiKey()),
     avatarService: Boolean(process.env.AVATAR_SERVICE_URL),
+    // Clonar/transformar/ampliar/extraer trabajan sobre la imagen
+    // adjunta con sharp y la visión ya conectadas: sin llaves nuevas.
+    imageTools: true,
+    // La narración usa la misma voz Dalia de /api/speak (sin clave).
+    narration: true,
   };
 }
 
@@ -83,6 +94,105 @@ export function toolDefinitions(caps: ToolCapabilities) {
     });
   }
 
+  if (caps.preciseEdit) {
+    tools.push({
+      type: 'function',
+      function: {
+        name: 'editar_imagen',
+        description:
+          'Edición PRECISA de la imagen adjunta: cambia SOLO el elemento indicado y conserva el resto de la imagen píxel a píxel (el fondo, los adornos y lo demás no se repintan). Úsala cuando el usuario pida cambiar, quitar o corregir UNA cosa de su imagen o logo manteniendo lo demás igual: cambiar una palabra del logo, corregir un texto, quitar un elemento. Es la herramienta correcta para logos existentes; crear_imagen en cambio RECREA la imagen completa y sirve para diseños nuevos. elemento = el elemento visible a localizar, descrito con su texto exacto (ej.: the word "COOL-ICHIS"). cambio = la instrucción de edición en INGLÉS, completa (ej.: replace the word "COOL-ICHIS" with "Culichis" in the identical gold 3D lettering style). Requiere que el usuario haya adjuntado la imagen en este mensaje.',
+        parameters: {
+          type: 'object',
+          properties: {
+            elemento: { type: 'string', description: 'El elemento visible a cambiar, con su texto exacto si es texto.' },
+            cambio: { type: 'string', description: 'La instrucción de edición en inglés: qué poner en su lugar, con el mismo estilo.' },
+          },
+          required: ['elemento', 'cambio'],
+        },
+      },
+    });
+  }
+
+  if (caps.imageTools) {
+    tools.push(
+      {
+        type: 'function',
+        function: {
+          name: 'clonar_imagen',
+          description:
+            'CLONA la imagen que el usuario adjuntó en este mensaje. Úsala cuando pida clonar, duplicar, copiar fielmente o hacer una versión de su imagen. modo="exacto": devuelve la imagen IDÉNTICA, píxel a píxel, sin pasar por ningún motor de IA (es una copia real del archivo). modo="variacion": genera UNA variante fiel a partir de la adjunta (misma composición, sujeto, colores y estilo; cambios solo si el usuario los pide en cambios). Para UNA variante por llamada: si pide varias, llama la herramienta varias veces. cambios va en INGLÉS cuando modo="variacion". Requiere la imagen adjunta en este mensaje.',
+          parameters: {
+            type: 'object',
+            properties: {
+              modo: { type: 'string', enum: ['exacto', 'variacion'], description: 'exacto = copia idéntica del archivo; variacion = versión generada fiel a la original.' },
+              cambios: { type: 'string', description: 'Solo en variacion: los cambios pedidos, en inglés. Vacío = variante fiel sin cambios.' },
+            },
+            required: ['modo'],
+          },
+        },
+      },
+      {
+        type: 'function',
+        function: {
+          name: 'transformar_imagen',
+          description:
+            'Transforma la imagen adjunta de forma EXACTA y determinista (sin IA, sin repintar): convierte el formato (png, jpg, webp), redimensiona a un ancho/alto en píxeles y/o rota (0, 90, 180, 270). Úsala cuando pidan convertir, redimensionar, achicar, girar o cambiar el formato de su imagen. Requiere la imagen adjunta en este mensaje.',
+          parameters: {
+            type: 'object',
+            properties: {
+              formato: { type: 'string', enum: ['png', 'jpg', 'webp'], description: 'Formato de salida (opcional).' },
+              ancho: { type: 'number', description: 'Ancho de salida en píxeles (opcional, 16-8000).' },
+              alto: { type: 'number', description: 'Alto de salida en píxeles (opcional, 16-8000).' },
+              rotar: { type: 'number', enum: [0, 90, 180, 270], description: 'Grados de rotación (opcional).' },
+            },
+          },
+        },
+      },
+      {
+        type: 'function',
+        function: {
+          name: 'ampliar_imagen',
+          description:
+            'Amplía la imagen adjunta (upscale determinista con sharp, sin IA): la escala al factor pedido (2 por defecto, máximo 4) o al ancho objetivo. Úsala cuando pidan agrandar una imagen, subir su resolución o hacerla más grande para imprimir. No inventa detalle: interpola con la mejor calidad. Requiere la imagen adjunta en este mensaje.',
+          parameters: {
+            type: 'object',
+            properties: {
+              factor: { type: 'number', description: 'Factor de escala 1.5-4 (opcional; por defecto 2).' },
+              ancho_objetivo: { type: 'number', description: 'Ancho final en píxeles (opcional; manda sobre factor).' },
+            },
+          },
+        },
+      },
+      {
+        type: 'function',
+        function: {
+          name: 'extraer_texto',
+          description:
+            'Extrae TODO el texto visible de la imagen adjunta (OCR con el modelo de visión): letras de un logo, un documento fotografiado, una captura, un letrero. Devuelve la transcripción literal para que la entregues tal cual. Úsala cuando pidan leer, transcribir o sacar el texto de una imagen. Requiere la imagen adjunta en este mensaje.',
+          parameters: { type: 'object', properties: {} },
+        },
+      },
+    );
+  }
+
+  if (caps.narration) {
+    tools.push({
+      type: 'function',
+      function: {
+        name: 'narrar_texto',
+        description:
+          'Convierte un texto en AUDIO narrado (MP3, voz femenina en español) y se lo muestra al usuario con reproductor y descarga. Úsala cuando pidan escuchar un texto, una narración, un audio de un guion o que les leas algo en un archivo de audio. Máximo ~1200 caracteres por llamada. El texto va EXACTO como debe escucharse.',
+        parameters: {
+          type: 'object',
+          properties: {
+            texto: { type: 'string', description: 'El texto exacto a narrar.' },
+          },
+          required: ['texto'],
+        },
+      },
+    });
+  }
+
   if (caps.googleMedia) {
     tools.push({
       type: 'function',
@@ -116,6 +226,135 @@ export function toolDefinitions(caps: ToolCapabilities) {
         },
       },
     });
+  }
+
+  if (caps.utilities) {
+    tools.push(
+      {
+        type: 'function',
+        function: {
+          name: 'leer_pagina',
+          description:
+            'Lee el contenido de texto de una página web (un artículo, una noticia, la página de un negocio) y te lo entrega para resumirlo o responder sobre él. Úsala cuando el usuario comparta un enlace que NO sea de GitHub y pida leerlo, resumirlo o analizarlo.',
+          parameters: {
+            type: 'object',
+            properties: {
+              url: { type: 'string', description: 'La URL completa de la página.' },
+            },
+            required: ['url'],
+          },
+        },
+      },
+      {
+        type: 'function',
+        function: {
+          name: 'clima',
+          description:
+            'Consulta el clima real de una ciudad: temperatura actual, condiciones y pronóstico de 3 días. Úsala cuando pregunten por el clima o el tiempo en algún lugar.',
+          parameters: {
+            type: 'object',
+            properties: {
+              ciudad: { type: 'string', description: 'Ciudad y, si se sabe, estado/país (ej.: Culiacán, Sinaloa).' },
+            },
+            required: ['ciudad'],
+          },
+        },
+      },
+      {
+        type: 'function',
+        function: {
+          name: 'tipo_cambio',
+          description:
+            'Consulta el tipo de cambio real entre dos monedas (USD, MXN, EUR…) y convierte una cantidad si la dan. Úsala cuando pregunten cuánto vale una moneda o cuánto es X en otra moneda.',
+          parameters: {
+            type: 'object',
+            properties: {
+              de: { type: 'string', description: 'Moneda origen en código ISO (USD, MXN, EUR).' },
+              a: { type: 'string', description: 'Moneda destino en código ISO.' },
+              cantidad: { type: 'number', description: 'Cantidad a convertir (opcional).' },
+            },
+            required: ['de', 'a'],
+          },
+        },
+      },
+      {
+        type: 'function',
+        function: {
+          name: 'calcular',
+          description:
+            'Calculadora exacta: evalúa una expresión aritmética (+, -, *, /, %, ^, paréntesis, sqrt(), abs(), round()) sin errores de redondeo mental. Úsala para cuentas con varios pasos, porcentajes encadenados o cifras grandes, y entrega el resultado de la herramienta.',
+          parameters: {
+            type: 'object',
+            properties: {
+              expresion: { type: 'string', description: 'La expresión, ej.: (1250 * 0.16) + 340 / 2' },
+            },
+            required: ['expresion'],
+          },
+        },
+      },
+      {
+        type: 'function',
+        function: {
+          name: 'fecha_actual',
+          description:
+            'Te dice la fecha y hora actual reales (día de la semana, fecha y hora). Úsala cuando la respuesta dependa de qué día es hoy o de la hora, o cuando te lo pregunten.',
+          parameters: {
+            type: 'object',
+            properties: {
+              zona: { type: 'string', description: 'Zona horaria IANA opcional (ej.: America/Mazatlan, America/Mexico_City).' },
+            },
+          },
+        },
+      },
+    );
+  }
+
+  if (caps.createFiles) {
+    tools.push(
+      {
+        type: 'function',
+        function: {
+          name: 'crear_qr',
+          description:
+            'Crea un código QR real en PNG (para un enlace, un teléfono, un WhatsApp, un texto) y se lo muestra al usuario con descarga. Úsala cuando pidan un QR.',
+          parameters: {
+            type: 'object',
+            properties: {
+              contenido: { type: 'string', description: 'El enlace o texto que llevará el QR.' },
+            },
+            required: ['contenido'],
+          },
+        },
+      },
+      {
+        type: 'function',
+        function: {
+          name: 'crear_presentacion',
+          description:
+            'Crea una presentación PowerPoint (.pptx) real y descargable: portada con el título y una diapositiva por tema con sus viñetas. Úsala cuando pidan una presentación, diapositivas o un pitch en PowerPoint.',
+          parameters: {
+            type: 'object',
+            properties: {
+              titulo: { type: 'string', description: 'Título de la presentación (portada).' },
+              subtitulo: { type: 'string', description: 'Subtítulo de la portada (opcional).' },
+              diapositivas: {
+                type: 'array',
+                description: 'Las diapositivas de contenido.',
+                items: {
+                  type: 'object',
+                  properties: {
+                    titulo: { type: 'string' },
+                    puntos: { type: 'array', items: { type: 'string' }, description: 'Viñetas de la diapositiva (3-6).' },
+                  },
+                  required: ['titulo', 'puntos'],
+                },
+              },
+            },
+            required: ['titulo', 'diapositivas'],
+          },
+        },
+      },
+    );
   }
 
   if (caps.avatarService) {
@@ -280,6 +519,184 @@ async function executeReadRepo(url: string): Promise<string> {
   ].join('\n');
 }
 
+async function executeReadPage(rawUrl: string): Promise<string> {
+  const url = rawUrl.trim();
+  if (!/^https?:\/\//i.test(url)) return 'La URL no es válida: debe empezar con http:// o https://';
+  if (process.env.TAVILY_API_KEY) {
+    try {
+      const res = await fetch('https://api.tavily.com/extract', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${process.env.TAVILY_API_KEY}` },
+        body: JSON.stringify({ urls: [url], extract_depth: 'basic' }),
+        signal: AbortSignal.timeout(30000),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        const text = data?.results?.[0]?.raw_content || data?.results?.[0]?.content || '';
+        if (text) return `Contenido de ${url}:\n\n${String(text).slice(0, 9000)}`;
+      }
+    } catch { /* se cae a la lectura directa */ }
+  }
+  const res = await fetch(url, {
+    headers: { 'User-Agent': 'Mozilla/5.0 (compatible; Calili/1.0)' },
+    signal: AbortSignal.timeout(20000),
+  });
+  if (!res.ok) return `La página respondió ${res.status}; no se pudo leer.`;
+  const html = await res.text();
+  const text = html
+    .replace(/<script[\s\S]*?<\/script>/gi, ' ')
+    .replace(/<style[\s\S]*?<\/style>/gi, ' ')
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/&nbsp;/g, ' ')
+    .replace(/&amp;/g, '&')
+    .replace(/\s+/g, ' ')
+    .trim();
+  if (!text) return 'La página no devolvió texto legible (puede requerir JavaScript o inicio de sesión).';
+  return `Contenido de ${url}:\n\n${text.slice(0, 9000)}`;
+}
+
+const WMO_ES: Record<number, string> = {
+  0: 'despejado', 1: 'mayormente despejado', 2: 'parcialmente nublado', 3: 'nublado',
+  45: 'niebla', 48: 'niebla con escarcha', 51: 'llovizna ligera', 53: 'llovizna', 55: 'llovizna intensa',
+  61: 'lluvia ligera', 63: 'lluvia', 65: 'lluvia fuerte', 71: 'nieve ligera', 73: 'nieve', 75: 'nieve fuerte',
+  80: 'chubascos ligeros', 81: 'chubascos', 82: 'chubascos fuertes', 95: 'tormenta', 96: 'tormenta con granizo', 99: 'tormenta con granizo fuerte',
+};
+
+async function executeWeather(ciudad: string): Promise<string> {
+  const geo = await fetch(
+    `https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(ciudad)}&count=1&language=es&format=json`,
+    { signal: AbortSignal.timeout(15000) },
+  );
+  if (!geo.ok) throw new Error(`geocoding respondió ${geo.status}`);
+  const geoData = await geo.json();
+  const place = geoData?.results?.[0];
+  if (!place) return `No encontré la ciudad «${ciudad}». Pide el nombre con estado o país.`;
+  const fc = await fetch(
+    `https://api.open-meteo.com/v1/forecast?latitude=${place.latitude}&longitude=${place.longitude}&current=temperature_2m,relative_humidity_2m,weather_code,wind_speed_10m&daily=temperature_2m_max,temperature_2m_min,weather_code&timezone=auto&forecast_days=3`,
+    { signal: AbortSignal.timeout(15000) },
+  );
+  if (!fc.ok) throw new Error(`pronóstico respondió ${fc.status}`);
+  const data = await fc.json();
+  const cur = data?.current ?? {};
+  const daily = data?.daily ?? {};
+  const lines = [
+    `Clima en ${place.name}${place.admin1 ? `, ${place.admin1}` : ''} (${place.country ?? ''}):`,
+    `Ahora: ${cur.temperature_2m}°C, ${WMO_ES[cur.weather_code] ?? 'condición no clasificada'}, humedad ${cur.relative_humidity_2m}%, viento ${cur.wind_speed_10m} km/h.`,
+  ];
+  const days: string[] = Array.isArray(daily.time) ? daily.time : [];
+  days.forEach((day: string, i: number) => {
+    lines.push(`${day}: máx ${daily.temperature_2m_max?.[i]}°C · mín ${daily.temperature_2m_min?.[i]}°C · ${WMO_ES[daily.weather_code?.[i]] ?? ''}`);
+  });
+  return lines.join('\n');
+}
+
+async function executeFx(deRaw: string, aRaw: string, cantidad?: number): Promise<string> {
+  const de = deRaw.trim().toUpperCase();
+  const a = aRaw.trim().toUpperCase();
+  if (!/^[A-Z]{3}$/.test(de) || !/^[A-Z]{3}$/.test(a)) return 'Las monedas deben ir en código ISO de 3 letras (USD, MXN, EUR…).';
+  const res = await fetch(`https://api.frankfurter.app/latest?from=${de}&to=${a}`, {
+    signal: AbortSignal.timeout(15000),
+  });
+  if (!res.ok) throw new Error(`tipo de cambio respondió ${res.status}`);
+  const data = await res.json();
+  const rate = data?.rates?.[a];
+  if (typeof rate !== 'number') return `No hay tipo de cambio disponible para ${de} → ${a}.`;
+  const base = `Tipo de cambio (${data.date ?? 'hoy'}): 1 ${de} = ${rate} ${a}.`;
+  if (typeof cantidad === 'number' && Number.isFinite(cantidad)) {
+    const converted = cantidad * rate;
+    return `${base}\n${cantidad} ${de} = ${converted.toLocaleString('es-MX', { maximumFractionDigits: 2 })} ${a}.`;
+  }
+  return base;
+}
+
+// Calculadora segura: descenso recursivo sobre la expresión; cualquier
+// token fuera de la gramática aritmética aborta. Nada de eval.
+function safeEval(rawExpr: string): number {
+  const expr = rawExpr.replace(/\s+/g, '');
+  if (!expr || expr.length > 200) throw new Error('expresión vacía o demasiado larga');
+  if (!/^[0-9a-zA-Z+\-*/%^().,]+$/.test(expr)) throw new Error('la expresión trae caracteres no permitidos');
+  let pos = 0;
+  const peek = () => expr[pos];
+  const eat = (ch?: string) => { if (ch && expr[pos] !== ch) throw new Error(`se esperaba «${ch}»`); return expr[pos++]; };
+  function parseExpr(): number {
+    let value = parseTerm();
+    while (peek() === '+' || peek() === '-') {
+      const op = eat();
+      const rhs = parseTerm();
+      value = op === '+' ? value + rhs : value - rhs;
+    }
+    return value;
+  }
+  function parseTerm(): number {
+    let value = parseFactor();
+    while (peek() === '*' || peek() === '/' || peek() === '%') {
+      const op = eat();
+      const rhs = parseFactor();
+      value = op === '*' ? value * rhs : op === '/' ? value / rhs : value % rhs;
+    }
+    return value;
+  }
+  function parseFactor(): number {
+    let base = parseUnary();
+    if (peek() === '^') { eat(); base = Math.pow(base, parseFactor()); }
+    return base;
+  }
+  function parseUnary(): number {
+    if (peek() === '-') { eat(); return -parseUnary(); }
+    if (peek() === '+') { eat(); return parseUnary(); }
+    return parseAtom();
+  }
+  function parseAtom(): number {
+    if (peek() === '(') { eat(); const v = parseExpr(); eat(')'); return v; }
+    const rest = expr.slice(pos);
+    const fn = rest.match(/^(sqrt|abs|round|floor|ceil)\(/);
+    if (fn) {
+      pos += fn[0].length;
+      const v = parseExpr();
+      eat(')');
+      switch (fn[1]) {
+        case 'sqrt': return Math.sqrt(v);
+        case 'abs': return Math.abs(v);
+        case 'round': return Math.round(v);
+        case 'floor': return Math.floor(v);
+        default: return Math.ceil(v);
+      }
+    }
+    if (/^pi\b/.test(rest)) { pos += 2; return Math.PI; }
+    const num = rest.match(/^\d+(?:[.,]\d+)?/);
+    if (num) { pos += num[0].length; return parseFloat(num[0].replace(',', '.')); }
+    throw new Error(`no se entiende «${rest.slice(0, 12)}»`);
+  }
+  const result = parseExpr();
+  if (pos !== expr.length) throw new Error('la expresión no se pudo evaluar completa');
+  if (!Number.isFinite(result)) throw new Error('el resultado no es un número finito');
+  return result;
+}
+
+function currentDateTime(zonaRaw?: string): string {
+  const zona = (zonaRaw || 'America/Mazatlan').trim();
+  try {
+    const fmt = new Intl.DateTimeFormat('es-MX', {
+      timeZone: zona, weekday: 'long', year: 'numeric', month: 'long', day: 'numeric',
+      hour: 'numeric', minute: '2-digit', hour12: true,
+    });
+    return `Fecha y hora actual en ${zona}: ${fmt.format(new Date())}.`;
+  } catch {
+    return 'La zona horaria indicada no es válida; usa un nombre IANA como America/Mazatlan.';
+  }
+}
+
+function parseImageDataUrl(dataUrl: string): { mime: string; buffer: Buffer } | null {
+  const match = dataUrl.match(/^data:(image\/[a-zA-Z+.-]+);base64,(.+)$/);
+  return match ? { mime: match[1], buffer: Buffer.from(match[2], 'base64') } : null;
+}
+
+function imageExt(mime: string): string {
+  if (mime.includes('png')) return 'png';
+  if (mime.includes('webp')) return 'webp';
+  return 'jpg';
+}
+
 export async function executeTool(name: string, rawArgs: string, context?: { images?: string[] }): Promise<ToolExecution> {
   let args: Record<string, unknown> = {};
   try {
@@ -379,6 +796,208 @@ export async function executeTool(name: string, rawArgs: string, context?: { ima
         return { resultForModel: await executeSearch(String(args.consulta ?? '')) };
       case 'leer_repositorio':
         return { resultForModel: await executeReadRepo(String(args.url ?? '')) };
+      case 'editar_imagen': {
+        const image = context?.images?.[0];
+        if (!image) {
+          return { resultForModel: 'Para editar con precisión necesito que el usuario adjunte la imagen en este mensaje. Pídesela en una frase.' };
+        }
+        const { localizedEdit } = await import('@/lib/localized-edit');
+        const result = await localizedEdit({
+          imageDataUrl: image,
+          elemento: String(args.elemento ?? ''),
+          cambio: String(args.cambio ?? ''),
+        });
+        return {
+          resultForModel: result.precise
+            ? `Imagen editada con precisión: ${result.file.name}. Solo se modificó el elemento pedido y el resto quedó intacto; ya se le mostró al usuario con vista previa y descarga. Confírmalo en una frase breve.`
+            : `No se pudo aislar el elemento y se entregó una RECREACIÓN completa de la imagen (${result.file.name}), ya mostrada al usuario. Sé honesto en una frase: es una recreación, no la edición precisa, y puede variar del original.`,
+          file: result.file,
+        };
+      }
+      case 'leer_pagina':
+        return { resultForModel: await executeReadPage(String(args.url ?? '')) };
+      case 'clima':
+        return { resultForModel: await executeWeather(String(args.ciudad ?? '')) };
+      case 'tipo_cambio':
+        return { resultForModel: await executeFx(String(args.de ?? ''), String(args.a ?? ''), typeof args.cantidad === 'number' ? args.cantidad : undefined) };
+      case 'calcular': {
+        const expr = String(args.expresion ?? '');
+        const value = safeEval(expr);
+        const shown = Number.isInteger(value) ? String(value) : value.toLocaleString('es-MX', { maximumFractionDigits: 6 });
+        return { resultForModel: `Resultado exacto de ${expr} = ${shown}. Entrégalo tal cual, sin recalcular.` };
+      }
+      case 'fecha_actual':
+        return { resultForModel: currentDateTime(typeof args.zona === 'string' ? args.zona : undefined) };
+      case 'crear_qr': {
+        const contenido = String(args.contenido ?? '').trim();
+        if (!contenido) return { resultForModel: 'Falta el contenido del QR.' };
+        const QRCode = (await import('qrcode')).default;
+        const buffer = await QRCode.toBuffer(contenido, {
+          type: 'png', width: 720, margin: 2,
+          color: { dark: '#111827', light: '#ffffff' },
+        });
+        return {
+          resultForModel: 'Código QR creado: ya se le mostró al usuario con vista previa y botón de descarga. Confírmalo en una frase breve.',
+          file: { name: 'qr-calili.png', mime: 'image/png', base64: buffer.toString('base64') },
+        };
+      }
+      case 'crear_presentacion': {
+        const PptxGenJS = (await import('pptxgenjs')).default;
+        const pptx = new PptxGenJS();
+        pptx.defineLayout({ name: 'CALILI_16x9', width: 13.33, height: 7.5 });
+        pptx.layout = 'CALILI_16x9';
+        const titulo = String(args.titulo ?? 'Presentación').slice(0, 120);
+        const subtitulo = typeof args.subtitulo === 'string' ? args.subtitulo.slice(0, 200) : '';
+        const portada = pptx.addSlide();
+        portada.background = { color: '111827' };
+        portada.addText(titulo, { x: 0.7, y: 2.4, w: 11.9, h: 1.6, fontSize: 40, bold: true, color: 'FFFFFF', fontFace: 'Arial' });
+        if (subtitulo) portada.addText(subtitulo, { x: 0.7, y: 4.1, w: 11.9, h: 0.8, fontSize: 20, color: '9CA3AF', fontFace: 'Arial' });
+        const slides = Array.isArray(args.diapositivas) ? args.diapositivas.slice(0, 20) : [];
+        for (const slide of slides) {
+          const s = (slide ?? {}) as { titulo?: unknown; puntos?: unknown };
+          const diapo = pptx.addSlide();
+          diapo.background = { color: '1F2937' };
+          diapo.addText(String(s.titulo ?? 'Sin título').slice(0, 120), { x: 0.7, y: 0.5, w: 11.9, h: 0.9, fontSize: 30, bold: true, color: 'FFFFFF', fontFace: 'Arial' });
+          const puntos = Array.isArray(s.puntos) ? s.puntos.slice(0, 8).map((p) => String(p).slice(0, 300)) : [];
+          if (puntos.length) {
+            diapo.addText(
+              puntos.map((p) => ({ text: p, options: { bullet: true, breakLine: true } })),
+              { x: 0.9, y: 1.7, w: 11.5, h: 5.2, fontSize: 20, color: 'E5E7EB', fontFace: 'Arial', lineSpacingMultiple: 1.3 },
+            );
+          }
+        }
+        const out = await pptx.write({ outputType: 'nodebuffer' });
+        const buffer = Buffer.isBuffer(out) ? out : Buffer.from(out as ArrayBuffer);
+        return {
+          resultForModel: `Presentación creada: presentacion-calili.pptx con portada y ${slides.length} diapositivas. Ya se le mostró al usuario su tarjeta de descarga. Confírmalo en una frase breve.`,
+          file: { name: 'presentacion-calili.pptx', mime: 'application/vnd.openxmlformats-officedocument.presentationml.presentation', base64: buffer.toString('base64') },
+        };
+      }
+      case 'clonar_imagen': {
+        const image = context?.images?.[0];
+        if (!image) {
+          return { resultForModel: 'Para clonar necesito que el usuario adjunte la imagen en este mensaje. Pídesela en una frase.' };
+        }
+        if (args.modo !== 'variacion') {
+          // Clon EXACTO: el archivo viaja tal cual, sin motor de IA.
+          // Es la única vía con fidelidad del 100%.
+          const parsed = parseImageDataUrl(image);
+          if (!parsed) return { resultForModel: 'La imagen adjunta no se pudo leer para clonarla.' };
+          const ext = imageExt(parsed.mime);
+          return {
+            resultForModel: `Imagen clonada EXACTA (copia idéntica del archivo original, píxel a píxel): clon-calili.${ext}. Ya se le mostró al usuario con vista previa y descarga. Confírmalo en una frase breve.`,
+            file: { name: `clon-calili.${ext}`, mime: parsed.mime, base64: parsed.buffer.toString('base64') },
+          };
+        }
+        const cambios = String(args.cambios ?? '').trim();
+        const result = await createImage(
+          {
+            prompt: cambios
+              ? `Faithful clone of the attached image with these changes only: ${cambios}. Keep everything else exactly the same: identical composition, subject, colors, style, lighting and every text verbatim.`
+              : 'Faithful clone of the attached image: identical composition, subject, colors, style, lighting and every text verbatim. Recreate it as closely as possible to the original.',
+            usar_adjunta: true,
+          },
+          image,
+        );
+        return {
+          resultForModel: `Variante clonada creada: ${result.file.name}. Es una recreación fiel generada a partir de la original (no una copia píxel a píxel); ya se le mostró al usuario con vista previa y descarga. ${result.note ?? ''} Confírmalo en una frase breve y honesta.`,
+          file: result.file,
+        };
+      }
+      case 'transformar_imagen': {
+        const image = context?.images?.[0];
+        if (!image) {
+          return { resultForModel: 'Para transformar necesito que el usuario adjunte la imagen en este mensaje. Pídesela en una frase.' };
+        }
+        const parsed = parseImageDataUrl(image);
+        if (!parsed) return { resultForModel: 'La imagen adjunta no se pudo leer para transformarla.' };
+        const sharp = (await import('sharp')).default;
+        let pipeline = sharp(parsed.buffer);
+        const rotar = typeof args.rotar === 'number' ? args.rotar : 0;
+        if ([90, 180, 270].includes(rotar)) pipeline = pipeline.rotate(rotar);
+        const ancho = typeof args.ancho === 'number' && Number.isFinite(args.ancho) ? Math.min(8000, Math.max(16, Math.round(args.ancho))) : undefined;
+        const alto = typeof args.alto === 'number' && Number.isFinite(args.alto) ? Math.min(8000, Math.max(16, Math.round(args.alto))) : undefined;
+        if (ancho || alto) pipeline = pipeline.resize({ width: ancho, height: alto, fit: 'inside', withoutEnlargement: false });
+        const formato = args.formato === 'jpg' || args.formato === 'webp' || args.formato === 'png'
+          ? args.formato
+          : imageExt(parsed.mime);
+        const out = formato === 'jpg'
+          ? await pipeline.jpeg({ quality: 92 }).toBuffer()
+          : formato === 'webp'
+            ? await pipeline.webp({ quality: 92 }).toBuffer()
+            : await pipeline.png().toBuffer();
+        const meta = await sharp(out).metadata();
+        const mime = formato === 'jpg' ? 'image/jpeg' : formato === 'webp' ? 'image/webp' : 'image/png';
+        return {
+          resultForModel: `Imagen transformada de forma exacta (sin IA): imagen-transformada.${formato}, ${meta.width}x${meta.height}px. Ya se le mostró al usuario con vista previa y descarga. Confírmalo en una frase breve.`,
+          file: { name: `imagen-transformada.${formato}`, mime, base64: out.toString('base64') },
+        };
+      }
+      case 'ampliar_imagen': {
+        const image = context?.images?.[0];
+        if (!image) {
+          return { resultForModel: 'Para ampliar necesito que el usuario adjunte la imagen en este mensaje. Pídesela en una frase.' };
+        }
+        const parsed = parseImageDataUrl(image);
+        if (!parsed) return { resultForModel: 'La imagen adjunta no se pudo leer para ampliarla.' };
+        const sharp = (await import('sharp')).default;
+        const metaIn = await sharp(parsed.buffer).metadata();
+        if (!metaIn.width) return { resultForModel: 'No se pudo leer el tamaño de la imagen adjunta.' };
+        let targetWidth: number;
+        if (typeof args.ancho_objetivo === 'number' && Number.isFinite(args.ancho_objetivo)) {
+          targetWidth = Math.min(8000, Math.max(metaIn.width + 1, Math.round(args.ancho_objetivo)));
+        } else {
+          const factor = typeof args.factor === 'number' && Number.isFinite(args.factor)
+            ? Math.min(4, Math.max(1.5, args.factor))
+            : 2;
+          targetWidth = Math.min(8000, Math.round(metaIn.width * factor));
+        }
+        const formato = imageExt(parsed.mime);
+        let pipeline = sharp(parsed.buffer).resize({ width: targetWidth, kernel: 'lanczos3' });
+        const out = formato === 'jpg'
+          ? await pipeline.jpeg({ quality: 92 }).toBuffer()
+          : formato === 'webp'
+            ? await pipeline.webp({ quality: 92 }).toBuffer()
+            : await pipeline.png().toBuffer();
+        const meta = await sharp(out).metadata();
+        const mime = formato === 'jpg' ? 'image/jpeg' : formato === 'webp' ? 'image/webp' : 'image/png';
+        return {
+          resultForModel: `Imagen ampliada (sin IA, interpolación de máxima calidad): de ${metaIn.width}x${metaIn.height} a ${meta.width}x${meta.height}px. Ya se le mostró al usuario con vista previa y descarga. Confírmalo en una frase breve, sin prometer detalle nuevo: ampliar no inventa detalle.`,
+          file: { name: `imagen-ampliada.${formato}`, mime, base64: out.toString('base64') },
+        };
+      }
+      case 'extraer_texto': {
+        const image = context?.images?.[0];
+        if (!image) {
+          return { resultForModel: 'Para extraer el texto necesito que el usuario adjunte la imagen en este mensaje. Pídesela en una frase.' };
+        }
+        const { streamVisionChat } = await import('@/lib/nexus-gateway');
+        const messages = [
+          { role: 'system', content: 'Eres un OCR exacto. Transcribes SOLO el texto visible, sin comentarios ni explicaciones.' },
+          {
+            role: 'user',
+            content: [
+              { type: 'text', text: 'Transcribe literalmente TODO el texto visible en esta imagen, en su orden de lectura, conservando mayúsculas y líneas. Si no hay texto legible, responde exactamente: SIN TEXTO LEGIBLE.' },
+              { type: 'image_url', image_url: { url: image } },
+            ],
+          },
+        ];
+        let text = '';
+        for await (const chunk of streamVisionChat(messages)) text += chunk;
+        const clean = text.trim();
+        if (!clean) return { resultForModel: 'La visión no devolvió texto de la imagen. Dilo en una frase.' };
+        return { resultForModel: `Texto extraído de la imagen (transcripción literal; entrégalo al usuario tal cual, en un bloque de cita o código, sin corregirlo ni resumirlo):\n\n${clean.slice(0, 8000)}` };
+      }
+      case 'narrar_texto': {
+        const texto = String(args.texto ?? '').trim();
+        if (!texto) return { resultForModel: 'No llegó el texto a narrar.' };
+        const { synthesizeNarration } = await import('@/lib/tts');
+        const narration = await synthesizeNarration(texto);
+        return {
+          resultForModel: 'Narración creada en MP3: ya se le mostró al usuario con reproductor y botón de descarga. Confírmalo en una frase breve.',
+          file: { name: 'narracion-calili.mp3', mime: narration.mime, base64: narration.base64 },
+        };
+      }
       default:
         return { resultForModel: `Herramienta desconocida: ${name}` };
     }

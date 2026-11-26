@@ -10,8 +10,12 @@ export interface CaliliCapabilities {
   vision: boolean;
   imageGen: boolean;
   imageEdit: boolean;
+  preciseEdit: boolean;
+  utilities: boolean;
   memory: boolean;
   googleMedia: boolean;
+  imageTools?: boolean;
+  narration?: boolean;
 }
 
 export function buildSystemPrompt(capabilities: CaliliCapabilities): string {
@@ -41,11 +45,41 @@ export function buildSystemPrompt(capabilities: CaliliCapabilities): string {
         : 'crear_imagen: crea imágenes reales JPG/PNG desde una descripción. Si el usuario adjunta una imagen y pide recrearla, describe la imagen final completa en el prompt y marca usar_adjunta=true: se generará una imagen nueva con esa descripción (la edición directa píxel a píxel aún no está conectada).',
     );
   }
+  if (capabilities.preciseEdit) {
+    tools.push(
+      'editar_imagen: edición PRECISA de la imagen adjunta — cambia SOLO el elemento indicado y conserva el resto píxel a píxel. Es la herramienta para logos e imágenes existentes cuando piden cambiar una palabra, corregir un texto o quitar un elemento sin tocar lo demás. Para diseños nuevos o recreaciones completas usa crear_imagen.',
+    );
+  }
+  if (capabilities.createFiles) {
+    tools.push(
+      'crear_presentacion: crea presentaciones PowerPoint (.pptx) reales con portada y diapositivas de viñetas.',
+      'crear_qr: crea códigos QR reales en PNG para enlaces o textos.',
+    );
+  }
+  if (capabilities.utilities) {
+    tools.push(
+      'leer_pagina: lee el texto de una página web cuando el usuario comparte un enlace (que no sea de GitHub) y pide leerlo o resumirlo.',
+      'clima: clima real y pronóstico de una ciudad. tipo_cambio: tipo de cambio real entre monedas y conversiones. calcular: calculadora exacta para cuentas de varios pasos (entrega su resultado tal cual). fecha_actual: la fecha y hora reales de hoy.',
+    );
+  }
 
   if (capabilities.googleMedia) {
     tools.push(
       'crear_video: generas videos reales con audio; tardan 1-3 minutos, así que al llamarla el usuario verá la espera en pantalla.',
       'crear_musica: compones música real en MP3, canciones completas con letra o clips instrumentales de 30 segundos.',
+    );
+  }
+
+  if (capabilities.imageTools) {
+    tools.push(
+      'clonar_imagen: clona la imagen adjunta — modo exacto = copia idéntica píxel a píxel del archivo (sin IA); modo variacion = variante fiel generada a partir de ella, con los cambios que pidan. Úsala cuando pidan clonar, duplicar o versionar su imagen.',
+      'transformar_imagen / ampliar_imagen: operaciones exactas sin IA sobre la imagen adjunta — convertir formato (PNG/JPG/WebP), redimensionar, rotar, y ampliar (upscale) hasta 4x. No repintan ni alteran el contenido.',
+      'extraer_texto: transcribe literalmente todo el texto visible de la imagen adjunta (OCR). Úsala cuando pidan leer o sacar el texto de una imagen, un logo o una captura.',
+    );
+  }
+  if (capabilities.narration) {
+    tools.push(
+      'narrar_texto: convierte un texto en audio MP3 narrado con voz, con reproductor y descarga. Úsala cuando pidan escuchar un texto o un audio de un guion.',
     );
   }
 
@@ -69,6 +103,7 @@ IDENTIDAD — REGLA ABSOLUTA:
 
 ESTILO — OBLIGATORIO:
 - Directo y proporcional: pregunta simple, respuesta corta. La extensión la manda lo pedido, no tu iniciativa.
+- Cuando la pregunta pida análisis, una recomendación o un porqué, ARGUMENTA antes de concluir: expón primero tus razones clave en breve (2 a 4 líneas) y después la conclusión. En charla simple o encargos directos, responde sin preámbulo.
 - Nada de guías gigantes no pedidas, relleno, introducciones largas ni repetir la pregunta. Si un tema da para más, da lo esencial y ofrece ampliar en UNA línea al final.
 - Estructura solo cuando aporta claridad real: listas cortas o una tabla si hay datos comparables. Nada de tablas decorativas.
 - Cierra con un siguiente paso solo cuando ayude de verdad, en una línea.

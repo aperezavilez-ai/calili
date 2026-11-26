@@ -92,6 +92,8 @@ export default function ChatInterface() {
     }));
   };
   const [streamingConvId, setStreamingConvId] = useState<string | null>(null);
+  const [activity, setActivity] = useState<{ label: string; at: number } | null>(null);
+  useEffect(() => { if (!isLoading) setActivity(null); }, [isLoading]);
   const partialContentRef = useRef('');
   const handledUsersRef = useRef<Set<string>>(new Set());
   const [voiceModeOpen, setVoiceModeOpen] = useState(false);
@@ -268,6 +270,9 @@ export default function ChatInterface() {
             try {
               const parsed = JSON.parse(data);
               if (parsed.error) throw new Error(parsed.error);
+              if (typeof parsed.status === 'string' && parsed.status !== 'working') {
+                setActivity({ label: parsed.status, at: Date.now() });
+              }
               if (parsed.file && convId) {
                 addGeneratedFile(convId, { name: parsed.file.name, mime: parsed.file.mime, base64: parsed.file.base64 });
               }
@@ -499,9 +504,9 @@ export default function ChatInterface() {
     >
       <Sidebar userEmail={userEmail} onSignOut={signOut} />
       <main className="flex-1 flex flex-col min-h-0 min-w-0 w-full">
-        <MessageList messages={displayMessages} files={generatedFiles} isLoading={isLoading} onRegenerate={handleRegenerate} onEditMessage={handleEditMessage} onSuggestion={(text) => void handleSendMessage(text)} />
+        <MessageList messages={displayMessages} files={generatedFiles} isLoading={isLoading} activity={activity} onRegenerate={handleRegenerate} onEditMessage={handleEditMessage} onSuggestion={(text) => void handleSendMessage(text)} />
         <InstallBanner />
-        <InputBox onSendMessage={handleSendMessage} onStopMessage={stopResponse} isLoading={isLoading} onVoiceMode={() => setVoiceModeOpen(true)} />
+        <InputBox onSendMessage={handleSendMessage} onStopMessage={stopResponse} isLoading={isLoading} onVoiceMode={() => setVoiceModeOpen(true)} focusKey={`${currentConversationId ?? 'nueva'}-${voiceModeOpen ? 'voz' : 'chat'}`} />
       </main>
       {voiceModeOpen && (
         <VoiceMode

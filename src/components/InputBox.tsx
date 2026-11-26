@@ -8,9 +8,10 @@ interface InputBoxProps {
   onStopMessage: () => void;
   isLoading: boolean;
   onVoiceMode?: () => void;
+  focusKey?: string;
 }
 
-export function InputBox({ onSendMessage, onStopMessage, isLoading, onVoiceMode }: InputBoxProps) {
+export function InputBox({ onSendMessage, onStopMessage, isLoading, onVoiceMode, focusKey }: InputBoxProps) {
   const [input, setInput] = useState('');
   const [attachments, setAttachments] = useState<File[]>([]);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -22,6 +23,18 @@ export function InputBox({ onSendMessage, onStopMessage, isLoading, onVoiceMode 
       textareaRef.current.style.height = `${Math.min(textareaRef.current.scrollHeight, 200)}px`;
     }
   }, [input]);
+
+  // El cursor vive en el recuadro: al abrir el chat, al cambiar de
+  // conversación, al cerrar el modo voz y al terminar cada respuesta,
+  // el foco regresa solo y se puede escribir sin dar clic. Sin
+  // compuerta de puntero (v3.4.1): la compuerta '(pointer: fine)'
+  // dejaba sin cursor a los equipos donde el navegador no lo reporta
+  // así (portátiles táctiles, PWA en tableta) — el juicio de Luis fue
+  // en PC y el cursor no aparecía. El atributo autoFocus del textarea
+  // es el respaldo del primer montaje.
+  useEffect(() => {
+    if (!isLoading) textareaRef.current?.focus();
+  }, [isLoading, focusKey]);
 
 
 
@@ -96,6 +109,7 @@ export function InputBox({ onSendMessage, onStopMessage, isLoading, onVoiceMode 
           </button>
           <textarea
             ref={textareaRef}
+            autoFocus
             value={input}
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={handleKeyDown}
@@ -103,7 +117,6 @@ export function InputBox({ onSendMessage, onStopMessage, isLoading, onVoiceMode 
             placeholder="Envía un mensaje a Calili..."
             className="flex-1 bg-transparent outline-none resize-none max-h-[200px] min-h-[24px] text-white placeholder:text-white/40 leading-relaxed"
             rows={1}
-            disabled={isLoading}
           />
 
           {/* Botón de voz */}

@@ -1,247 +1,63 @@
-# 🚀 Calili - Guía de Despliegue
+# Despliegue de Calili
 
-## 📋 Checklist Pre-Despliegue
+## 1. Requisitos previos
 
-### 1. ✅ Configurar Supabase
+- Cuenta en [Vercel](https://vercel.com)
+- Proyecto en [Supabase](https://supabase.com)
+- Al menos una clave de motor: `MEAI_API_KEY` o `GROQ_API_KEY`
 
-- [ ] Crear proyecto en Supabase
-- [ ] Ejecutar SQL de migraciones (ver README.md)
-- [ ] Copiar URL y ANON_KEY
-- [ ] Habilitar Auth providers (opcional: Google, GitHub)
+## 2. Base de datos
 
-### 2. ✅ Configurar API GPT
+1. Entra a tu proyecto Supabase → **SQL Editor**.
+2. Copia y ejecuta el contenido completo de:
 
-- [ ] Obtener API key de tu proveedor
-- [ ] Verificar que soporta:
-  - `/v1/chat/completions` (chat)
-  - `/v1/images/generations` (DALL-E)
+   ```
+   supabase/migrations/001_schema.sql
+   ```
 
-### 3. ✅ Variables de Entorno
+3. Verifica que aparezca el mensaje:  
+   `✅ Calili schema (public) aplicado correctamente`
 
-Crea `.env.local`:
+## 3. Variables de entorno en Vercel
 
-```env
-NEXT_PUBLIC_SUPABASE_URL=https://xxxxx.supabase.co
-NEXT_PUBLIC_SUPABASE_ANON_KEY=eyJxxx...
-GPT_API_URL=https://api.openai.com/v1/chat/completions
-GPT_API_KEY=sk-xxx
-GPT_MODEL=gpt-5.5
-NEXT_PUBLIC_APP_URL=http://localhost:3000
-```
+En el proyecto de Vercel → **Settings → Environment Variables** añade:
 
-### 4. ✅ Generar Iconos PWA
+### Obligatorias (al menos un motor + Supabase)
 
-Sigue las instrucciones en `GENERAR-ICONOS.md` para crear todos los iconos requeridos.
+| Variable                        | Descripción                          |
+|---------------------------------|--------------------------------------|
+| `MEAI_API_KEY`                  | Clave principal (recomendada)        |
+| `GROQ_API_KEY`                  | Respaldo                             |
+| `NEXT_PUBLIC_SUPABASE_URL`      | URL del proyecto Supabase            |
+| `NEXT_PUBLIC_SUPABASE_ANON_KEY` | Clave anon pública                   |
+| `NEXT_PUBLIC_APP_URL`           | https://calili.vercel.app (o tu dominio) |
 
----
+### Opcionales pero recomendadas
 
-## 🌐 Deploy en Vercel
+| Variable               | Descripción                              |
+|------------------------|------------------------------------------|
+| `GOOGLE_AI_API_KEY`    | Imágenes, vídeo y música                 |
+| `TAVILY_API_KEY`       | Búsqueda web                             |
+| `OPENAI_API_KEY`       | Voz premium + edición de imágenes        |
+| `AVATAR_SERVICE_URL`   | Servicio de avatar (GPU)                 |
+| `AVATAR_SERVICE_TOKEN` | Token del servicio de avatar             |
 
-### Opción A: Desde GitHub (Recomendado)
+## 4. Deploy
 
-1. **Push a GitHub:**
+1. Conecta el repositorio GitHub a Vercel.
+2. Framework preset: **Next.js**.
+3. Deploy.
 
-```bash
-git init
-git add .
-git commit -m "Initial commit - Calili"
-git branch -M main
-git remote add origin https://github.com/TU_USUARIO/calili.git
-git push -u origin main
-```
+## 5. Comprobaciones post-deploy
 
-2. **Conectar Vercel:**
+- [ ] La app carga en el dominio.
+- [ ] Puedes iniciar sesión (Supabase Auth).
+- [ ] El chat responde (prueba un mensaje simple).
+- [ ] Se guardan conversaciones al refrescar.
+- [ ] La PWA se puede instalar (Chrome / Safari).
 
-- Ve a https://vercel.com
-- Click **"Import Project"**
-- Selecciona tu repositorio GitHub
-- Framework preset: **Next.js** (auto-detectado)
+## Notas
 
-3. **Configurar Variables de Entorno:**
-
-En Vercel Dashboard → **Settings** → **Environment Variables**:
-
-```
-NEXT_PUBLIC_SUPABASE_URL = https://xxxxx.supabase.co
-NEXT_PUBLIC_SUPABASE_ANON_KEY = eyJxxx...
-GPT_API_URL = https://api.openai.com/v1/chat/completions
-GPT_API_KEY = sk-xxx
-GPT_MODEL = gpt-5.5
-NEXT_PUBLIC_APP_URL = https://calili.vercel.app
-```
-
-4. **Deploy:**
-
-- Click **"Deploy"**
-- Espera 2-3 minutos
-- ✅ Listo! URL: `https://calili.vercel.app`
-
-### Opción B: Vercel CLI
-
-```bash
-npm i -g vercel
-vercel login
-vercel
-
-# Configurar variables
-vercel env add NEXT_PUBLIC_SUPABASE_URL
-vercel env add NEXT_PUBLIC_SUPABASE_ANON_KEY
-vercel env add GPT_API_URL
-vercel env add GPT_API_KEY
-vercel env add GPT_MODEL
-
-# Deploy a producción
-vercel --prod
-```
-
----
-
-## 📱 Configurar Dominio Custom
-
-1. En Vercel Dashboard → **Settings** → **Domains**
-2. Click **"Add"**
-3. Ingresa tu dominio: `calili.tudominio.com`
-4. Sigue las instrucciones DNS
-5. Espera propagación (5-10 min)
-
----
-
-## 🔒 Configurar HTTPS
-
-Vercel provee HTTPS automático con certificado SSL gratuito (Let's Encrypt).
-
-**No requiere configuración adicional.**
-
----
-
-## 🧪 Testing Post-Deploy
-
-### 1. Verificar PWA
-
-En Chrome DevTools:
-- **Application** → **Manifest** → Verificar que carga
-- **Lighthouse** → Run PWA audit → Score >90
-
-### 2. Probar instalación
-
-**iOS:**
-- Safari → Compartir → Agregar a inicio
-- Abrir app → Verificar que funciona offline
-
-**Android:**
-- Chrome → Banner "Instalar app"
-- Instalar → Verificar icono en pantalla
-
-### 3. Funcionalidades
-
-- [ ] Chat funciona (streaming)
-- [ ] Generación de imágenes funciona
-- [ ] Modo razonamiento funciona
-- [ ] Voz funciona (síntesis)
-- [ ] Historial persiste
-- [ ] Modo oscuro/claro
-- [ ] Sidebar responsive
-
----
-
-## 📊 Monitoreo
-
-### Vercel Analytics
-
-Habilitar en Dashboard → **Analytics** (gratis hasta 2,500 eventos/mes)
-
-### Logs en tiempo real
-
-```bash
-vercel logs --follow
-```
-
----
-
-## 🐛 Troubleshooting Deploy
-
-### Error: "Module not found"
-
-```bash
-# Limpiar cache
-rm -rf .next node_modules
-npm install
-npm run build
-```
-
-### Error: Variables de entorno no funcionan
-
-- En Vercel: Redeploy para aplicar cambios
-- Verificar prefijo `NEXT_PUBLIC_` en variables del cliente
-
-### PWA no funciona en producción
-
-- Verificar que `next.config.js` tiene `withPWA`
-- Verificar que `manifest.json` es accesible: `https://tu-url.com/manifest.json`
-- Forzar HTTPS (HTTP no permite PWA)
-
----
-
-## 🔄 CI/CD Automático
-
-Ya incluido en `.github/workflows/deploy.yml`
-
-**Cada push a `main` despliega automáticamente.**
-
-Configurar secrets en GitHub:
-- **Settings** → **Secrets** → **Actions**
-- Agregar:
-  - `VERCEL_TOKEN`
-  - `VERCEL_ORG_ID`
-  - `VERCEL_PROJECT_ID`
-  - `NEXT_PUBLIC_SUPABASE_URL`
-  - `NEXT_PUBLIC_SUPABASE_ANON_KEY`
-  - `GPT_API_URL`
-  - `GPT_API_KEY`
-  - `GPT_MODEL`
-
----
-
-## 💰 Costos Estimados
-
-| Servicio | Plan | Costo |
-|----------|------|-------|
-| **Vercel** | Hobby | $0 (hasta 100GB bandwidth) |
-| **Supabase** | Free | $0 (hasta 500MB DB) |
-| **OpenAI API** | Pay-as-you-go | ~$0.002/request GPT-4 |
-| **DALL-E 3** | Pay-as-you-go | ~$0.04/imagen |
-
-**Total mensual:** $0 + costos de API (depende de uso)
-
----
-
-## 📈 Escalabilidad
-
-### Gratis → Pro
-
-Si superas límites gratuitos:
-
-1. **Vercel Pro:** $20/mes (500GB bandwidth, analytics avanzado)
-2. **Supabase Pro:** $25/mes (8GB DB, backups diarios)
-3. **OpenAI:** Escala según uso (sin límite)
-
----
-
-## ✅ Checklist Final
-
-- [ ] Deploy exitoso en Vercel
-- [ ] Variables de entorno configuradas
-- [ ] Supabase conectado
-- [ ] API GPT funcionando
-- [ ] PWA instalable en iOS
-- [ ] PWA instalable en Android
-- [ ] HTTPS habilitado
-- [ ] Dominio custom (opcional)
-- [ ] Analytics habilitado
-- [ ] CI/CD configurado
-
----
-
-**¡Listo! Calili está en producción.** 🎉
-
-URL: https://calili.vercel.app
+- El esquema oficial es **public** (no `calili`).
+- No uses la clave `service_role` en el frontend.
+- En desarrollo local puedes dejar Supabase vacío: la app funciona solo con almacenamiento local.

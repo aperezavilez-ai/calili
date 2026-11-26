@@ -242,6 +242,7 @@ export interface NexusToolCall {
 export interface NexusCompletion {
   content: string;
   toolCalls: NexusToolCall[];
+  finishReason?: string;
 }
 
 // El proveedor que atiende herramientas, resúmenes y (si es ME AI) la
@@ -288,7 +289,7 @@ export async function completeWithTools(
       tools,
       tool_choice: 'auto',
       stream: false,
-      max_completion_tokens: 4096,
+      max_completion_tokens: 1536,
     }),
     signal: signal && typeof AbortSignal.any === 'function'
       ? AbortSignal.any([signal, AbortSignal.timeout(90_000)])
@@ -312,6 +313,7 @@ export async function completeWithTools(
   return {
     content: typeof message.content === 'string' ? message.content : '',
     toolCalls: Array.isArray(message.tool_calls) ? message.tool_calls : [],
+    finishReason: typeof data.choices?.[0]?.finish_reason === 'string' ? data.choices[0].finish_reason : undefined,
   };
 }
 

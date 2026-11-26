@@ -30,6 +30,51 @@ function compactHistory(messages: NexusMessage[]): NexusMessage[] {
   }));
 }
 
+// La pasada que DECIDE si llamar herramientas no necesita la
+// conversación entera: sistema + últimos mensajes recortados. La
+// respuesta final sí va con el historial completo; esta dieta es solo
+// de la decisión y es la principal palanca de rapidez del turno.
+const DECISION_MESSAGES = 6;
+const DECISION_CHARS = 1500;
+function decisionContext(full: NexusMessage[]): NexusMessage[] {
+  const [system, ...rest] = full;
+  const tail = rest.slice(-DECISION_MESSAGES).map((message) => ({
+    role: message.role,
+    content: message.content.slice(0, DECISION_CHARS),
+  }));
+  return system ? [system, ...tail] : tail;
+}
+
+// Lo que el usuario LEE mientras Calili trabaja: cada fase y cada
+// herramienta anuncia qué está haciendo (el cliente lo muestra junto
+// a los puntos de espera, con el tiempo transcurrido).
+const TOOL_STATUS: Record<string, string> = {
+  crear_archivo: 'Creando tu archivo…',
+  crear_presentacion: 'Armando tu presentación…',
+  crear_qr: 'Generando tu código QR…',
+  crear_imagen: 'Creando tu imagen…',
+  clonar_imagen: 'Clonando tu imagen…',
+  transformar_imagen: 'Transformando tu imagen…',
+  ampliar_imagen: 'Ampliando tu imagen…',
+  extraer_texto: 'Extrayendo el texto de tu imagen…',
+  narrar_texto: 'Grabando la narración…',
+  editar_imagen: 'Editando tu imagen con precisión…',
+  crear_video: 'Creando tu video — puede tardar de 1 a 3 minutos…',
+  crear_musica: 'Componiendo tu música…',
+  crear_video_hablado: 'Creando tu video hablado — puede tardar varios minutos…',
+  buscar_web: 'Buscando en internet…',
+  leer_pagina: 'Leyendo la página…',
+  leer_repositorio: 'Leyendo el repositorio…',
+  clima: 'Consultando el clima…',
+  tipo_cambio: 'Consultando el tipo de cambio…',
+  calcular: 'Calculando…',
+  recordar: 'Guardando en mi memoria…',
+  olvidar: 'Actualizando mi memoria…',
+};
+function toolStatus(name: string): string {
+  return TOOL_STATUS[name] ?? 'Trabajando en tu encargo…';
+}
+
 function errorMessage(error: unknown): string {
   if (error instanceof NexusConfigError) return error.message;
   const raw = error instanceof Error ? error.message : String(error ?? '');
@@ -90,8 +135,12 @@ export async function POST(req: NextRequest) {
       vision: true,
       imageGen: caps.imageGen,
       imageEdit: caps.imageEdit,
+      preciseEdit: caps.preciseEdit,
+      utilities: caps.utilities,
       memory: caps.memory,
       googleMedia: caps.googleMedia,
+      imageTools: caps.imageTools,
+      narration: caps.narration,
     }) + (voiceMode
       ? '\n\nMODO VOZ (el usuario te escucha, no te lee): responde conversacional y breve, de 1 a 3 frases cortas. Nada de listas, tablas, encabezados ni markdown.'
       : '');
@@ -128,7 +177,7 @@ export async function POST(req: NextRequest) {
         // proxies cortan la conexion aunque la funcion siga viva.
         const heartbeat = setInterval(() => send(controller, { status: 'working' }), 15000);
         try {
-          send(controller, { status: 'preparing' });
+          send(controller, { status: 'Pensando…' });
 
           // Resumen rodante: si la conversacion ya no cabe completa, la
           // parte antigua viaja como resumen (el historial visible del
@@ -181,10 +230,11 @@ export async function POST(req: NextRequest) {
               try {
                 const note: NexusMessage = {
                   role: 'system',
-                  content: 'El usuario adjuntó una imagen en este mensaje (la tienes en el servidor). Si pide ANIMAR la imagen, darle movimiento, convertirla en video o hacer un clip con ella, llama crear_video con usar_adjunta=true y una descripción en inglés del movimiento, la escena y el sonido. Si pide crear, recrear, modificar o generar una imagen, llama crear_imagen con usar_adjunta=true y un prompt en inglés que describa la imagen FINAL completa. Si solo pide analizarla o preguntar por ella, no llames herramientas.',
+                  content: 'El usuario adjuntó una imagen en este mensaje (la tienes en el servidor). Si pide ANIMAR la imagen, darle movimiento, convertirla en video o hacer un clip con ella, llama crear_video con usar_adjunta=true y una descripción en inglés del movimiento, la escena y el sonido. Si pide crear o generar una imagen nueva, llama crear_imagen con usar_adjunta=true y un prompt en inglés que describa la imagen FINAL completa. Si pide cambiar SOLO una cosa de su imagen conservando lo demás igual (cambiar una palabra de un logo, corregir un texto, quitar un elemento), llama editar_imagen con el elemento exacto y el cambio en inglés. Si pide CLONAR, duplicar o copiar su imagen, llama clonar_imagen (modo exacto para la copia idéntica; modo variacion para una versión fiel con cambios). Si pide convertir el formato, redimensionar o girar su imagen, llama transformar_imagen; si pide agrandarla o subir su resolución, ampliar_imagen; si pide leer o sacar el texto de la imagen, extraer_texto. Si solo pide analizarla o preguntar por ella, no llames herramientas.',
                 };
+                send(controller, { status: 'Revisando tu imagen…' });
                 const completion = await completeWithTools(
-                  [...fullMessages, note] as unknown[],
+                  decisionContext([...fullMessages, note]),
                   toolDefinitions(caps),
                   req.signal,
                 );
@@ -196,12 +246,14 @@ export async function POST(req: NextRequest) {
                   ];
                   const files: GeneratedFile[] = [];
                   for (const call of callsToRun) {
+                    send(controller, { status: toolStatus(call.function.name) });
                     const execution = await executeTool(call.function.name, call.function.arguments, { images: imageList });
                     if (execution.file) files.push(execution.file);
                     if (execution.memoryEvent) send(controller, { memory: execution.memoryEvent });
                     workingMessages.push({ role: 'tool', tool_call_id: call.id, content: execution.resultForModel });
                   }
                   for (const file of files) send(controller, { file });
+                  send(controller, { status: 'Escribiendo la respuesta…' });
                   for await (const chunk of streamNexusChat(workingMessages as unknown as NexusMessage[], { signal: req.signal })) {
                     send(controller, { content: chunk });
                   }
@@ -230,6 +282,7 @@ export async function POST(req: NextRequest) {
                 visionMessages.push(message);
               }
             });
+            send(controller, { status: 'Analizando tu imagen…' });
             for await (const chunk of streamVisionChat(visionMessages, req.signal)) {
               send(controller, { content: chunk });
             }
@@ -244,9 +297,9 @@ export async function POST(req: NextRequest) {
           let handled = false;
           if (voiceMode && chatProviderAvailable()) {
             try {
-              const memoryDefs = toolDefinitions({ ...caps, createFiles: false, webSearch: false, readRepos: false, imageGen: false });
+              const memoryDefs = toolDefinitions({ ...caps, createFiles: false, webSearch: false, readRepos: false, imageGen: false, imageTools: false, narration: false, googleMedia: false, preciseEdit: false, utilities: false });
               if (memoryDefs.length > 0) {
-                const completion = await completeWithTools(fullMessages as unknown[], memoryDefs, req.signal);
+                const completion = await completeWithTools(decisionContext(fullMessages), memoryDefs, req.signal);
                 if (completion.toolCalls.length > 0) {
                   const callsToRun = completion.toolCalls.slice(0, 3);
                   const workingMessages: unknown[] = [
@@ -280,7 +333,7 @@ export async function POST(req: NextRequest) {
           if (!voiceMode && definitions.length > 0 && chatProviderAvailable()) {
             try {
               const completion = await completeWithTools(
-                fullMessages as unknown[],
+                decisionContext(fullMessages),
                 definitions,
                 req.signal,
               );
@@ -297,6 +350,7 @@ export async function POST(req: NextRequest) {
                 ];
                 const files: GeneratedFile[] = [];
                 for (const call of callsToRun) {
+                  send(controller, { status: toolStatus(call.function.name) });
                   const execution = await executeTool(call.function.name, call.function.arguments, { images: imageList });
                   if (execution.file) files.push(execution.file);
                   if (execution.memoryEvent) send(controller, { memory: execution.memoryEvent });
@@ -309,6 +363,7 @@ export async function POST(req: NextRequest) {
                 for (const file of files) {
                   send(controller, { file });
                 }
+                send(controller, { status: 'Escribiendo la respuesta…' });
                 let closingText = '';
                 for await (const chunk of streamNexusChat(
                   workingMessages as unknown as NexusMessage[],
@@ -326,9 +381,11 @@ export async function POST(req: NextRequest) {
                   });
                 }
                 handled = true;
-              } else if (completion.content) {
+              } else if (completion.content && completion.finishReason !== 'length') {
                 // Sin herramientas: se entrega la respuesta ya generada,
                 // en trozos para mantener la sensación de streaming.
+                // Si la decisión la cortó por longitud, NO se entrega a
+                // medias: el streaming directo de abajo la genera entera.
                 const pieces = completion.content.match(/[\s\S]{1,120}/g) ?? [];
                 for (const piece of pieces) send(controller, { content: piece });
                 handled = true;

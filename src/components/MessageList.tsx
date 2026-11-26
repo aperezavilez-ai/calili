@@ -22,9 +22,38 @@ interface MessageListProps {
   messages: Message[];
   files?: ChatFile[];
   isLoading?: boolean;
+  activity?: { label: string; at: number } | null;
   onRegenerate?: () => void;
   onEditMessage?: (messageId: string, newText: string) => void;
   onSuggestion?: (text: string) => void;
+}
+
+// Lo que Calili está haciendo mientras se espera: la etiqueta que manda
+// el servidor («Creando tu imagen…») con el tiempo transcurrido, en vez
+// de tres puntos mudos.
+function ActivityIndicator({ activity }: { activity?: { label: string; at: number } | null }) {
+  const [seconds, setSeconds] = useState(0);
+  useEffect(() => {
+    if (!activity) return;
+    setSeconds(0);
+    const timer = window.setInterval(() => {
+      setSeconds(Math.max(0, Math.floor((Date.now() - activity.at) / 1000)));
+    }, 500);
+    return () => window.clearInterval(timer);
+  }, [activity]);
+  return (
+    <div className="flex items-center gap-2 py-1" aria-label="Calili está trabajando">
+      <span className="flex items-center gap-1">
+        <span className="h-2 w-2 animate-bounce rounded-full bg-white/80 [animation-delay:-0.3s]" />
+        <span className="h-2 w-2 animate-bounce rounded-full bg-white/80 [animation-delay:-0.15s]" />
+        <span className="h-2 w-2 animate-bounce rounded-full bg-white/80" />
+      </span>
+      <span className="text-sm text-white/60">
+        {activity?.label ?? 'Pensando…'}
+        {seconds >= 3 ? ` · ${seconds}s` : ''}
+      </span>
+    </div>
+  );
 }
 
 function downloadChatFile(file: ChatFile) {
@@ -149,7 +178,7 @@ function CopyButton({ text }: { text: string }) {
 
 const actionBtn = 'rounded-md p-1.5 text-white/50 hover:bg-white/10 hover:text-white disabled:opacity-40';
 
-export function MessageList({ messages, files = [], isLoading, onRegenerate, onEditMessage, onSuggestion }: MessageListProps) {
+export function MessageList({ messages, files = [], isLoading, activity, onRegenerate, onEditMessage, onSuggestion }: MessageListProps) {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [draft, setDraft] = useState('');
   const [speakingId, setSpeakingId] = useState<string | null>(null);
@@ -296,11 +325,7 @@ export function MessageList({ messages, files = [], isLoading, onRegenerate, onE
                   : 'text-white/95'
               }`}>
                 {message.id === 'loading' ? (
-                  <div className="flex items-center gap-1 py-1" aria-label="Calili está pensando">
-                    <span className="h-2 w-2 animate-bounce rounded-full bg-white/80 [animation-delay:-0.3s]" />
-                    <span className="h-2 w-2 animate-bounce rounded-full bg-white/80 [animation-delay:-0.15s]" />
-                    <span className="h-2 w-2 animate-bounce rounded-full bg-white/80" />
-                  </div>
+                  <ActivityIndicator activity={activity} />
                 ) : message.role === 'user' ? (
                   editingId === message.id ? (
                     <div className="space-y-2">
