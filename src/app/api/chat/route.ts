@@ -75,6 +75,19 @@ function toolStatus(name: string): string {
   return TOOL_STATUS[name] ?? 'Trabajando en tu encargo…';
 }
 
+// Compuerta DETERMINISTA de confirmación (v3.4.3): si el usuario pide
+// confirmar que se entendió ANTES de proceder, este turno no llama
+// herramientas ni visión — el modelo solo resume lo entendido y
+// espera. Antes la regla vivía solo en el prompt y el camino de
+// imagen la pisaba: la pasada de decisión respondía «entendido» sin
+// herramientas, ese texto se DESCARTABA y la ruta caía a la visión,
+// que ejecutaba o moría en el intento (juicio de Luis, 2026-11-26).
+// Mecanismo en la ruta, no obediencia del modelo.
+const CONFIRM_FIRST_RE = /(antes de (proceder|hacer|continuar|seguir|empezar)|dime si entendiste|no (procedas|hagas|contin[uú]es|sigas|empieces)|conf[ií]rmame( que| si)? entend|espera (mi|a que te) confirm)/i;
+function asksConfirmFirst(text: string): boolean {
+  return CONFIRM_FIRST_RE.test(text);
+}
+
 function errorMessage(error: unknown): string {
   if (error instanceof NexusConfigError) return error.message;
   const raw = error instanceof Error ? error.message : String(error ?? '');
@@ -85,6 +98,17 @@ function errorMessage(error: unknown): string {
   }
   if (raw.includes('{"error"')) {
     return 'El motor no pudo completar la respuesta. Inténtalo de nuevo en un momento.';
+  }
+  // Regla dura (v3.4.3): NINGÚN detalle técnico crudo llega al usuario.
+  // Un 524 de Cloudflare pegó su página HTML entera en el chat porque
+  // el error traía el cuerpo del proveedor y este filtro solo cambiaba
+  // nombres. La pasarela ya no adjunta cuerpos, y aquí además: HTML o
+  // estado 5xx en el mensaje = lenguaje humano, siempre.
+  if (/<!doctype|<html[\s>]/i.test(raw)) {
+    return 'El motor tardó demasiado en responder. Inténtalo de nuevo en un momento.';
+  }
+  if (/respondió 5\d\d/.test(raw)) {
+    return 'El motor tardó demasiado en responder o falló en este intento. Inténtalo de nuevo en un momento.';
   }
   return publicErrorMessage(error);
 }
@@ -219,6 +243,27 @@ export async function POST(req: NextRequest) {
                 ...history,
               ];
             }
+          }
+
+          // --- Compuerta de confirmación: si el usuario pidió confirmar
+          // antes de proceder, este turno SOLO resume lo entendido y
+          // espera — sin herramientas y sin visión, haya imagen o no.
+          // El resumen sale del propio mensaje del usuario, que ya trae
+          // la instrucción completa; no necesita ver la imagen. --------
+          const lastUserText = [...history].reverse().find((m) => m.role === 'user')?.content ?? '';
+          if (asksConfirmFirst(lastUserText)) {
+            send(controller, { status: 'Confirmando el encargo…' });
+            const confirmNote: NexusMessage = {
+              role: 'system',
+              content:
+                'El usuario pidió que confirmes que entendiste ANTES de proceder. Responde SOLO con un resumen breve y concreto de lo entendido: qué vas a hacer, sobre qué material y con qué cambios exactos. No ejecutes nada en este turno y cierra esperando su confirmación.',
+            };
+            for await (const chunk of streamNexusChat([...fullMessages, confirmNote], { signal: req.signal })) {
+              send(controller, { content: chunk });
+            }
+            controller.enqueue(encoder.encode('data: [DONE]\n\n'));
+            controller.close();
+            return;
           }
 
           // --- Camino de visión: hay imágenes adjuntas -------------------

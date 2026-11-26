@@ -32,6 +32,16 @@ export interface NexusProvider {
 
 export class NexusConfigError extends Error {}
 
+// v3.4.3 — los errores que SUBEN nunca llevan el cuerpo crudo del
+// proveedor: ese cuerpo puede ser una página HTML completa (un 524 de
+// Cloudflare le llegó tal cual al usuario en el chat, 2026-11-26). El
+// detalle se registra en el servidor, donde sirve para diagnosticar,
+// y el error que viaja solo dice qué pasó en lenguaje interno limpio.
+function providerError(contexto: string, status: number, detail: string): Error {
+  if (detail) console.error(`Calili: ${contexto} — estado ${status}: ${detail.slice(0, 500)}`);
+  return new Error(`${contexto} respondió ${status}.`);
+}
+
 const GROQ_BASE_URL = process.env.GROQ_BASE_URL || 'https://api.groq.com/openai/v1';
 const MEAI_BASE_URL = process.env.MEAI_BASE_URL || 'https://api.meai.cloud/v1';
 export const DEFAULT_MEAI_MODEL = 'claude-sonnet-4.6';
@@ -142,7 +152,7 @@ async function* streamFromProvider(
   }
   if (!response.ok || !response.body) {
     const detail = await response.text().catch(() => '');
-    throw new Error(`El motor NEXUS (${provider.id}) respondió ${response.status}. ${detail.slice(0, 300)}`);
+    throw providerError(`El motor NEXUS (${provider.id})`, response.status, detail);
   }
 
   const reader = response.body.getReader();
@@ -258,17 +268,6 @@ function primaryProvider(): NexusProvider {
   return primary;
 }
 
-function groqProvider(): NexusProvider {
-  const providers = resolveProviders();
-  const groq = providers.find((p) => p.id === 'groq');
-  if (!groq) {
-    throw new NexusConfigError(
-      'Esta función requiere el motor en Groq: falta GROQ_API_KEY. Revisa tu archivo .env.',
-    );
-  }
-  return groq;
-}
-
 // Llamada sin streaming con herramientas (function calling). Devuelve el
 // contenido o las llamadas a herramientas que el modelo decidió hacer.
 export async function completeWithTools(
@@ -305,7 +304,7 @@ export async function completeWithTools(
   }
   if (!response.ok) {
     const detail = await response.text().catch(() => '');
-    throw new Error(`El motor NEXUS (${provider.id}) respondió ${response.status}. ${detail.slice(0, 300)}`);
+    throw providerError(`El motor NEXUS (${provider.id})`, response.status, detail);
   }
 
   const data = await response.json();
@@ -349,7 +348,7 @@ export async function summarizeHistory(previousSummary: string, transcript: stri
 
   if (!response.ok) {
     const detail = await response.text().catch(() => '');
-    throw new Error(`No se pudo resumir el historial (${response.status}). ${detail.slice(0, 200)}`);
+    throw providerError('No se pudo resumir el historial', response.status, detail);
   }
   const data = await response.json();
   const content = data.choices?.[0]?.message?.content;
@@ -359,47 +358,82 @@ export async function summarizeHistory(previousSummary: string, transcript: stri
 
 
 // Streaming desde el modelo de visión. Con llave de ME AI manda glm-5.2
-// por ME AI (así lo enruta EditCoreAI); si no, la cadena de modelos de
-// visión de Groq. Los mensajes llevan partes de texto e imagen
-// (image_url con data: en base64).
+// por ME AI (así lo enruta EditCoreAI), con la cadena de visión de Groq
+// como RESPALDO REAL (v3.4.3): antes, con ME AI presente, cualquier
+// error suyo que no fuera 404 mataba el turno — un 524 (timeout de
+// Cloudflare) dejó a Luis sin respuesta y con el HTML crudo en el
+// chat. Ahora: 404 model_not_found prueba el siguiente modelo de la
+// misma cadena; 429, 5xx o error de red saltan al siguiente PROVEEDOR;
+// 401/403 se reportan (limpios) porque son de credenciales. Los
+// mensajes llevan partes de texto e imagen (image_url con data:).
 export async function* streamVisionChat(
   messages: unknown[],
   signal?: AbortSignal,
 ): AsyncGenerator<string> {
   const providers = resolveProviders();
   const meai = providers.find((p) => p.id === 'meai');
-  const provider = meai ?? groqProvider();
-  const models = meai ? [MEAI_VISION_MODEL] : VISION_MODELS;
+  const groq = providers.find((p) => p.id === 'groq');
+  const chains: Array<{ provider: NexusProvider; models: string[] }> = [];
+  if (meai) chains.push({ provider: meai, models: [MEAI_VISION_MODEL] });
+  if (groq) chains.push({ provider: groq, models: VISION_MODELS });
+  if (chains.length === 0) {
+    throw new NexusConfigError(
+      'Esta función requiere el motor de visión: falta MEAI_API_KEY o GROQ_API_KEY. Revisa tu archivo .env.',
+    );
+  }
   let response: Response | null = null;
   let lastStatus = 0;
-  for (const model of models) {
-    const attempt = await fetch(`${provider.baseUrl}/chat/completions`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${provider.apiKey}`,
-      },
-      body: JSON.stringify({
-        model,
-        messages,
-        stream: true,
-        max_completion_tokens: 2048,
-      }),
-      signal,
-    });
-    if (attempt.ok && attempt.body) {
-      response = attempt;
-      break;
-    }
-    lastStatus = attempt.status;
-    const detail = await attempt.text().catch(() => '');
-    // Solo se prueba el siguiente modelo si este no existe; otro error
-    // (401, 429, 500) se reporta tal cual.
-    if (attempt.status !== 404 || !detail.includes('model_not_found')) {
-      throw new Error(`El modelo de visión respondió ${attempt.status}. ${detail.slice(0, 300)}`);
+  let lastError: unknown;
+  chainLoop:
+  for (const chain of chains) {
+    for (const model of chain.models) {
+      let attempt: Response;
+      try {
+        attempt = await fetch(`${chain.provider.baseUrl}/chat/completions`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${chain.provider.apiKey}`,
+          },
+          body: JSON.stringify({
+            model,
+            messages,
+            stream: true,
+            max_completion_tokens: 2048,
+          }),
+          signal,
+        });
+      } catch (error) {
+        // Error de red o timeout contra este proveedor: se prueba el
+        // siguiente. (Un aborto del cliente NO es esto si trae señal:
+        // si la señal ya abortó, se propaga tal cual.)
+        if (signal?.aborted) throw error;
+        console.error(`Calili: visión — red falló contra ${chain.provider.id}, se prueba el respaldo`, error);
+        lastError = error;
+        continue chainLoop;
+      }
+      if (attempt.ok && attempt.body) {
+        response = attempt;
+        break chainLoop;
+      }
+      lastStatus = attempt.status;
+      const detail = await attempt.text().catch(() => '');
+      if (attempt.status === 404 && detail.includes('model_not_found')) {
+        console.error(`Calili: visión — modelo ${model} no existe en ${chain.provider.id}, se prueba el siguiente`);
+        continue;
+      }
+      if (attempt.status === 429 || attempt.status >= 500) {
+        console.error(`Calili: visión — ${chain.provider.id} respondió ${attempt.status}, se prueba el respaldo. Detalle: ${detail.slice(0, 300)}`);
+        lastError = providerError('El modelo de visión', attempt.status, '');
+        continue chainLoop;
+      }
+      // 401/403 y demás 4xx: credenciales o petición — se reporta
+      // limpio, sin pegar el cuerpo del proveedor.
+      throw providerError('El modelo de visión', attempt.status, detail);
     }
   }
   if (!response || !response.body) {
+    if (lastError instanceof Error) throw lastError;
     throw new Error(`Ningún modelo de visión respondió (último estado ${lastStatus}). El proveedor pudo haber retirado el modelo actual; avísale a Luis para actualizar el ID.`);
   }
 
