@@ -100,7 +100,7 @@ export function toolDefinitions(caps: ToolCapabilities) {
       function: {
         name: 'editar_imagen',
         description:
-          'Edición PRECISA de la imagen adjunta: cambia SOLO el elemento indicado y conserva el resto de la imagen píxel a píxel (el fondo, los adornos y lo demás no se repintan). Úsala cuando el usuario pida cambiar, quitar o corregir UNA cosa de su imagen o logo manteniendo lo demás igual: cambiar una palabra del logo, corregir un texto, quitar un elemento. Es la herramienta correcta para logos existentes; crear_imagen en cambio RECREA la imagen completa y sirve para diseños nuevos. elemento = el elemento visible a localizar, descrito con su texto exacto (ej.: the word "COOL-ICHIS"). cambio = la instrucción de edición en INGLÉS, completa (ej.: replace the word "COOL-ICHIS" with "Culichis" in the identical gold 3D lettering style). Requiere que el usuario haya adjuntado la imagen en este mensaje.',
+          'Edición PRECISA de la imagen adjunta: cambia SOLO el elemento indicado y conserva el resto de la imagen píxel a píxel (el fondo, los adornos y lo demás no se repintan). El resultado se VERIFICA antes de entregarse: si el cambio no quedó aplicado, la herramienta lo declara y no entrega nada. Úsala cuando el usuario pida cambiar, quitar o corregir UNA cosa de su imagen o logo manteniendo lo demás igual: cambiar una palabra del logo, corregir un texto, quitar un elemento. Es la herramienta correcta para logos existentes; crear_imagen en cambio RECREA la imagen completa y sirve para diseños nuevos. elemento = el elemento visible a localizar, descrito con su texto exacto (ej.: the word "COOL-ICHIS"). cambio = la instrucción de edición en INGLÉS, completa (ej.: replace the word "COOL-ICHIS" with "Culichis" in the identical gold 3D lettering style). Requiere que el usuario haya adjuntado la imagen en este mensaje.',
         parameters: {
           type: 'object',
           properties: {
@@ -807,10 +807,13 @@ export async function executeTool(name: string, rawArgs: string, context?: { ima
           elemento: String(args.elemento ?? ''),
           cambio: String(args.cambio ?? ''),
         });
+        if (result.failed || !result.file) {
+          return {
+            resultForModel: 'La edición precisa NO se logró: el elemento no se pudo localizar o el cambio no quedó verificado en el resultado tras dos intentos. NO hay archivo que mostrar. Dilo honestamente en una o dos frases, sin inventar un resultado, y ofrece la alternativa real: recrear la imagen completa con crear_imagen (avisando que es una recreación y puede variar del original) si el usuario lo pide.',
+          };
+        }
         return {
-          resultForModel: result.precise
-            ? `Imagen editada con precisión: ${result.file.name}. Solo se modificó el elemento pedido y el resto quedó intacto; ya se le mostró al usuario con vista previa y descarga. Confírmalo en una frase breve.`
-            : `No se pudo aislar el elemento y se entregó una RECREACIÓN completa de la imagen (${result.file.name}), ya mostrada al usuario. Sé honesto en una frase: es una recreación, no la edición precisa, y puede variar del original.`,
+          resultForModel: `Imagen editada con precisión y VERIFICADA: ${result.file.name}. El cambio pedido se comprobó visible en el resultado y el resto de la imagen quedó intacto; ya se le mostró al usuario con vista previa y descarga. Confírmalo en una frase breve.`,
           file: result.file,
         };
       }

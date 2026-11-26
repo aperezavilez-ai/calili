@@ -104,7 +104,12 @@ export function InputBox({ onSendMessage, onStopMessage, isLoading, onVoiceMode,
         {/* Input Box estilo ChatGPT */}
         <div className="relative flex items-end gap-2 bg-[#40414f] rounded-3xl py-3 px-4 shadow-2xl border border-white/10">
           <input ref={fileInputRef} type="file" multiple accept=".txt,.md,.csv,.json,.xml,.html,.pdf,.docx,.xlsx,image/*" onChange={handleFiles} className="hidden" />
-          <button type="button" onClick={() => fileInputRef.current?.click()} disabled={isLoading} className="flex-shrink-0 rounded-xl p-2 text-white/60 transition-colors hover:bg-white/10 hover:text-white" title="Adjuntar archivos">
+          {/* Adjuntar SIEMPRE activo (v3.4.2): antes llevaba
+              disabled={isLoading} y con un turno de minutos el botón
+              quedaba muerto todo ese rato — Luis lo reportó como
+              «dañaste el botón». Los archivos elegidos quedan en la
+              lista de adjuntos listos para el próximo envío. */}
+          <button type="button" onClick={() => fileInputRef.current?.click()} className="flex-shrink-0 rounded-xl p-2 text-white/60 transition-colors hover:bg-white/10 hover:text-white" title="Adjuntar archivos">
             <Paperclip className="h-5 w-5" />
           </button>
           <textarea

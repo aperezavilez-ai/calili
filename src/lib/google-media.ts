@@ -126,6 +126,7 @@ export async function googleImage(
 export async function googleImageHQ(
   prompt: string,
   editImageDataUrl?: string,
+  timeoutMs: number = 150_000,
 ): Promise<{ file: GeneratedFile; note?: string }> {
   const model = process.env.GOOGLE_IMAGE_MODEL_HQ || 'gemini-nano-banana-2.1';
   const input: unknown[] = [{ type: 'text', text: prompt }];
@@ -142,7 +143,7 @@ export async function googleImageHQ(
       input,
       response_format: withSize ? { type: 'image', image_size: '2K' } : { type: 'image' },
     }),
-    signal: AbortSignal.timeout(150_000),
+    signal: AbortSignal.timeout(timeoutMs),
   });
 
   let res = await attempt(true);
