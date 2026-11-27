@@ -51,16 +51,16 @@ export function toolDefinitions(caps: ToolCapabilities) {
       function: {
         name: 'crear_archivo',
         description:
-          'Crea un archivo real y descargable para el usuario. Úsala cuando pida un documento, un Word, un Excel, un PDF, un CSV o cualquier archivo. Para Excel/CSV con datos tabulares, manda columnas y filas.',
+          'Crea un archivo real y descargable para el usuario. Úsala cuando pida un documento, un Word, un Excel, un PDF, un CSV, un archivo de código o datos (SQL, JSON, HTML, XML, Python, JavaScript, TypeScript, CSS) o cualquier archivo. Para Excel/CSV con datos tabulares, manda columnas y filas. En los formatos de código el contenido se escribe EXACTO, sin convertirlo a Markdown.',
         parameters: {
           type: 'object',
           properties: {
-            formato: { type: 'string', enum: ['docx', 'xlsx', 'pdf', 'csv', 'md', 'txt'] },
+            formato: { type: 'string', enum: ['docx', 'xlsx', 'pdf', 'csv', 'md', 'txt', 'sql', 'json', 'html', 'xml', 'py', 'js', 'ts', 'css'] },
             nombre: { type: 'string', description: 'Nombre del archivo, sin extensión.' },
-            titulo: { type: 'string', description: 'Título visible dentro del documento.' },
+            titulo: { type: 'string', description: 'Título visible dentro del documento (solo formatos de documento; en código se ignora).' },
             contenido: {
               type: 'string',
-              description: 'Contenido en Markdown sencillo (# títulos, - viñetas, tablas con |). En Excel/CSV puede ir vacío si mandas columnas y filas.',
+              description: 'En documentos: Markdown sencillo (# títulos, - viñetas, tablas con |). En formatos de código (sql, json, html, xml, py, js, ts, css): el código EXACTO y completo, tal cual debe quedar en el archivo. En Excel/CSV puede ir vacío si mandas columnas y filas.',
             },
             columnas: { type: 'array', items: { type: 'string' }, description: 'Encabezados para Excel/CSV.' },
             filas: {

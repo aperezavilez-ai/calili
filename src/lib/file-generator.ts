@@ -3,10 +3,18 @@ import PDFDocument from 'pdfkit';
 import ExcelJS from 'exceljs';
 
 // Generador de archivos reales para la herramienta crear_archivo.
-// Formatos: docx, xlsx, pdf, csv, md, txt. El contenido de texto se
-// interpreta como Markdown sencillo (# títulos, - viñetas, | tablas |).
+// Formatos de documento: docx, xlsx, pdf, csv, md, txt (el contenido
+// se interpreta como Markdown sencillo: # títulos, - viñetas, | tablas |).
+// Formatos de código/datos (v3.4.7): sql, json, html, xml, py, js, ts,
+// css — su contenido se escribe EXACTO, byte a byte: nada de quitar
+// acentos gráficos ni anteponer títulos, o el código sale corrupto.
 
-export type GeneratedFileFormat = 'docx' | 'xlsx' | 'pdf' | 'csv' | 'md' | 'txt';
+export type GeneratedFileFormat =
+  | 'docx' | 'xlsx' | 'pdf' | 'csv' | 'md' | 'txt'
+  | 'sql' | 'json' | 'html' | 'xml' | 'py' | 'js' | 'ts' | 'css';
+
+// Formatos cuyo contenido viaja crudo, sin interpretación Markdown.
+export const RAW_FORMATS: GeneratedFileFormat[] = ['sql', 'json', 'html', 'xml', 'py', 'js', 'ts', 'css'];
 
 export interface GeneratedFile {
   name: string;
@@ -21,6 +29,14 @@ const MIME: Record<GeneratedFileFormat, string> = {
   csv: 'text/csv;charset=utf-8',
   md: 'text/markdown;charset=utf-8',
   txt: 'text/plain;charset=utf-8',
+  sql: 'application/sql;charset=utf-8',
+  json: 'application/json;charset=utf-8',
+  html: 'text/html;charset=utf-8',
+  xml: 'application/xml;charset=utf-8',
+  py: 'text/x-python;charset=utf-8',
+  js: 'text/javascript;charset=utf-8',
+  ts: 'text/plain;charset=utf-8',
+  css: 'text/css;charset=utf-8',
 };
 
 function sanitizeName(name: string, format: GeneratedFileFormat): string {
@@ -145,12 +161,15 @@ export interface CreateFileArgs {
   filas?: string[][];
 }
 
-const VALID_FORMATS: GeneratedFileFormat[] = ['docx', 'xlsx', 'pdf', 'csv', 'md', 'txt'];
+const VALID_FORMATS: GeneratedFileFormat[] = [
+  'docx', 'xlsx', 'pdf', 'csv', 'md', 'txt',
+  'sql', 'json', 'html', 'xml', 'py', 'js', 'ts', 'css',
+];
 
 export async function generateFile(args: CreateFileArgs): Promise<GeneratedFile> {
   const format = args.formato;
   if (!VALID_FORMATS.includes(format)) {
-    throw new Error(`Formato no soportado: ${String(format)}. Usa docx, xlsx, pdf, csv, md o txt.`);
+    throw new Error(`Formato no soportado: ${String(format)}. Usa docx, xlsx, pdf, csv, md, txt, sql, json, html, xml, py, js, ts o css.`);
   }
   if ((args.contenido ?? '').length > 200_000) {
     throw new Error('El contenido es demasiado grande para un solo archivo (máximo 200 000 caracteres).');
@@ -184,6 +203,12 @@ export async function generateFile(args: CreateFileArgs): Promise<GeneratedFile>
       break;
     case 'txt':
       buffer = Buffer.from(plainLines(content).join('\n'), 'utf-8');
+      break;
+    default:
+      // Formatos de código/datos: el contenido EXACTO que escribió el
+      // modelo. Pasar por plainLines quitaría `, * y _ y corrompería
+      // SQL/JSON/JS; anteponer el título como en md haría lo mismo.
+      buffer = Buffer.from(content, 'utf-8');
       break;
   }
 

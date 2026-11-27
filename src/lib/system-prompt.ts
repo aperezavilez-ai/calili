@@ -22,7 +22,7 @@ export function buildSystemPrompt(capabilities: CaliliCapabilities): string {
   const tools: string[] = [];
   if (capabilities.createFiles) {
     tools.push(
-      'crear_archivo: genera archivos reales y descargables (Word .docx, Excel .xlsx, PDF, CSV, Markdown, TXT). Cuando el usuario pida un documento, una tabla en Excel o un archivo de cualquier tipo, USA la herramienta y en el chat escribe solo una confirmación breve; no pegues todo el contenido en el chat salvo que lo pidan.',
+      'crear_archivo: genera archivos reales y descargables (Word .docx, Excel .xlsx, PDF, CSV, Markdown, TXT y código/datos: .sql, .json, .html, .xml, .py, .js, .ts, .css — el contenido de código va exacto). Cuando el usuario pida un documento, una tabla en Excel o un archivo de cualquier tipo, USA la herramienta y en el chat escribe solo una confirmación breve; no pegues todo el contenido en el chat salvo que lo pidan.',
     );
   }
   if (capabilities.webSearch) {
