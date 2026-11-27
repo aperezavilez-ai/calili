@@ -433,11 +433,12 @@ export function toolDefinitions(caps: ToolCapabilities) {
       function: {
         name: 'leer_repositorio',
         description:
-          'Lee un repositorio público de GitHub: descripción, README y estructura de archivos. Úsala cuando el usuario comparta un enlace de GitHub o pida analizar un repositorio.',
+          'Lee un repositorio público de GitHub: descripción, README, estructura y el CÓDIGO de sus archivos clave (manifiestos y puntos de entrada). Si el usuario pregunta por un archivo concreto, vuelve a llamarla con su ruta en «archivo» para leer ese archivo. Úsala cuando el usuario comparta un enlace de GitHub o pida analizar un repositorio.',
         parameters: {
           type: 'object',
           properties: {
             url: { type: 'string', description: 'URL del repositorio, p. ej. https://github.com/usuario/proyecto' },
+            archivo: { type: 'string', description: 'Opcional: ruta de un archivo concreto a leer, p. ej. src/index.ts' },
           },
           required: ['url'],
         },
@@ -479,7 +480,24 @@ async function executeSearch(consulta: string): Promise<string> {
     .join('\n\n');
 }
 
-async function executeReadRepo(url: string): Promise<string> {
+// Qué archivos leer de un repo: el pedido explícito manda; si no, los
+// manifiestos y puntos de entrada primero y luego el código más
+// superficial. Fuera binarios, lockfiles, pruebas y carpetas de build.
+const REPO_SKIP_RE = /(^|\/)(node_modules|dist|build|out|vendor|\.git)\/|(\.lock$|package-lock\.json|yarn\.lock|pnpm-lock\.yaml)|\.(png|jpe?g|gif|ico|svg|webp|woff2?|ttf|eot|mp3|mp4|mov|zip|tar|gz|pdf|min\.js|map)$/i;
+const REPO_MANIFEST_RE = /(^|\/)(package\.json|pyproject\.toml|requirements\.txt|Cargo\.toml|go\.mod|composer\.json|Gemfile|pom\.xml)$/i;
+const REPO_ENTRY_RE = /(^|\/)(index|main|app|page|server|cli)\.(ts|tsx|js|jsx|mjs|py|go|rs|php|rb)$/i;
+const REPO_SOURCE_RE = /\.(ts|tsx|js|jsx|mjs|py|go|rs|java|php|rb|md)$/i;
+function pickRepoFiles(paths: string[], archivo?: string): string[] {
+  if (archivo) return [archivo.replace(/^\/+/, '')];
+  const usable = paths.filter((p) => !REPO_SKIP_RE.test(p));
+  const depth = (p: string) => p.split('/').length;
+  const manifests = usable.filter((p) => REPO_MANIFEST_RE.test(p)).sort((a, b) => depth(a) - depth(b));
+  const entries = usable.filter((p) => REPO_ENTRY_RE.test(p) && !manifests.includes(p)).sort((a, b) => depth(a) - depth(b));
+  const sources = usable.filter((p) => REPO_SOURCE_RE.test(p) && !manifests.includes(p) && !entries.includes(p)).sort((a, b) => depth(a) - depth(b));
+  return [...manifests, ...entries, ...sources].slice(0, 6);
+}
+
+async function executeReadRepo(url: string, archivo?: string): Promise<string> {
   const match = /github\.com\/([^/\s]+)\/([^/\s#?]+)/.exec(url);
   if (!match) return 'Esa URL no parece de GitHub. Pide al usuario que la revise.';
   const [, owner, repoRaw] = match;
@@ -499,14 +517,48 @@ async function executeReadRepo(url: string): Promise<string> {
   if (!repoRes.ok) return `No se pudo leer el repositorio ${owner}/${repo} (HTTP ${repoRes.status}). Puede ser privado o no existir.`;
   const info = await repoRes.json();
   const readme = readmeRes.ok ? (await readmeRes.text()).slice(0, 6000) : '(sin README)';
-  let files = '';
+  let paths: string[] = [];
   if (treeRes.ok) {
     const tree = await treeRes.json();
-    files = ((tree.tree ?? []) as Array<{ path: string; type: string }>)
+    paths = ((tree.tree ?? []) as Array<{ path: string; type: string }>)
       .filter((t) => t.type === 'blob')
-      .slice(0, 120)
-      .map((t) => t.path)
-      .join('\n');
+      .map((t) => t.path);
+  }
+  const files = paths.slice(0, 120).join('\n');
+
+  // v3.4.6: antes esto era solo la ficha (README + nombres de archivo);
+  // Luis preguntó si Calili podía ANALIZAR un repo y la respuesta era
+  // que no. Ahora se lee el código de los archivos clave (o el archivo
+  // pedido) con presupuesto total de caracteres.
+  const picks = pickRepoFiles(paths, archivo);
+  let codeSection = '';
+  if (archivo && paths.length > 0 && !paths.includes(archivo.replace(/^\/+/, ''))) {
+    codeSection = `\n\nNOTA: el archivo pedido (${archivo}) no aparece en la estructura del repositorio.`;
+  }
+  if (picks.length > 0) {
+    const contents = await Promise.all(picks.map(async (path) => {
+      try {
+        const res = await fetch(`https://api.github.com/repos/${owner}/${repo}/contents/${path}`, {
+          headers: { ...headers, Accept: 'application/vnd.github.raw+json' },
+          signal: AbortSignal.timeout(20_000),
+        });
+        if (!res.ok) return null;
+        return { path, text: await res.text() };
+      } catch {
+        return null;
+      }
+    }));
+    const chunks: string[] = [];
+    let budget = 20000;
+    for (const item of contents) {
+      if (!item || budget <= 0) continue;
+      const slice = item.text.slice(0, Math.min(3500, budget));
+      budget -= slice.length;
+      chunks.push(`### ${item.path}\n${slice}`);
+    }
+    if (chunks.length > 0) {
+      codeSection = `\n\nCÓDIGO DE ARCHIVOS CLAVE:\n\n${chunks.join('\n\n')}`;
+    }
   }
 
   return [
@@ -516,6 +568,7 @@ async function executeReadRepo(url: string): Promise<string> {
     `Actualizado: ${info.updated_at}`,
     `\nARCHIVOS:\n${files || '(no se pudo listar)'}`,
     `\nREADME:\n${readme}`,
+    codeSection,
   ].join('\n');
 }
 
@@ -795,7 +848,7 @@ export async function executeTool(name: string, rawArgs: string, context?: { ima
       case 'buscar_web':
         return { resultForModel: await executeSearch(String(args.consulta ?? '')) };
       case 'leer_repositorio':
-        return { resultForModel: await executeReadRepo(String(args.url ?? '')) };
+        return { resultForModel: await executeReadRepo(String(args.url ?? ''), typeof args.archivo === 'string' ? args.archivo : undefined) };
       case 'editar_imagen': {
         const image = context?.images?.[0];
         if (!image) {

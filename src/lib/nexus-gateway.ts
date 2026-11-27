@@ -1,4 +1,4 @@
-// Pasarela NEXUS de Calili.
+// Pasarela del motor de Calili.
 // Un solo punto de salida hacia el modelo. Ningún proveedor queda cableado
 // en las rutas ni en la interfaz: todo se decide por variables de entorno.
 //
@@ -9,12 +9,12 @@
 //             claude-sonnet-4.6). Visión: MEAI_VISION_MODEL (glm-5.2).
 //   - groq  : respaldo. Requiere GROQ_API_KEY. Modelo: NEXUS_MODEL
 //             (por defecto openai/gpt-oss-120b).
-//   - local : desarrollo / respaldo en la PC de Luis. Solo se activa si
-//             NEXUS_LOCAL_URL está definida (p. ej. http://127.0.0.1:11434/v1
-//             para Ollama o http://127.0.0.1:1234/v1 para LM Studio).
-//             Modelo: NEXUS_LOCAL_MODEL. Clave opcional: NEXUS_LOCAL_API_KEY.
 //
-// Orden: meai → groq → local; NEXUS_PRIMARY puede anteponer otro. Si el
+// v3.4.6: el proveedor local (el modelo propio de Luis) salió de Calili
+// por decisión suya — Nexus V5 aún no está cerrado y Calili no depende
+// de él. Calili opera solo con meai + groq.
+//
+// Orden: meai → groq; NEXUS_PRIMARY puede anteponer otro. Si el
 // proveedor primario falla ANTES de entregar el primer token, se intenta
 // el siguiente.
 
@@ -24,7 +24,7 @@ export interface NexusMessage {
 }
 
 export interface NexusProvider {
-  id: 'groq' | 'local' | 'meai';
+  id: 'groq' | 'meai';
   baseUrl: string;
   apiKey: string;
   model: string;
@@ -81,16 +81,7 @@ export function resolveProviders(env: NodeJS.ProcessEnv = process.env): NexusPro
       }
     : null;
 
-  const local: NexusProvider | null = env.NEXUS_LOCAL_URL
-    ? {
-        id: 'local',
-        baseUrl: env.NEXUS_LOCAL_URL.replace(/\/+$/, ''),
-        apiKey: env.NEXUS_LOCAL_API_KEY || 'local-no-key',
-        model: env.NEXUS_LOCAL_MODEL || 'nexus',
-      }
-    : null;
-
-  const byPriority = [meai, groq, local].filter((p): p is NexusProvider => p !== null);
+  const byPriority = [meai, groq].filter((p): p is NexusProvider => p !== null);
   const primary = env.NEXUS_PRIMARY;
   if (primary) {
     const idx = byPriority.findIndex((p) => p.id === primary);
@@ -152,7 +143,7 @@ async function* streamFromProvider(
   }
   if (!response.ok || !response.body) {
     const detail = await response.text().catch(() => '');
-    throw providerError(`El motor NEXUS (${provider.id})`, response.status, detail);
+    throw providerError(`El motor de Calili (${provider.id})`, response.status, detail);
   }
 
   const reader = response.body.getReader();
@@ -194,7 +185,7 @@ export async function* streamNexusChat(
   const providers = resolveProviders();
   if (providers.length === 0) {
     throw new NexusConfigError(
-      'NEXUS no está configurado: falta MEAI_API_KEY (principal), GROQ_API_KEY (respaldo) o NEXUS_LOCAL_URL (local). Revisa tu archivo .env.',
+      'El motor de Calili no está configurado: falta MEAI_API_KEY (principal) o GROQ_API_KEY (respaldo). Revisa tu archivo .env.',
     );
   }
 
@@ -219,7 +210,7 @@ export async function* streamNexusChat(
               new Promise<never>((_, reject) => {
                 timer = setTimeout(() => {
                   void iterator.return(undefined).catch(() => undefined);
-                  reject(new Error(`El motor NEXUS (${provider.id}) tardó demasiado en arrancar.`));
+                  reject(new Error(`El motor de Calili (${provider.id}) tardó demasiado en arrancar.`));
                 }, FIRST_TOKEN_TIMEOUT_MS);
               }),
             ]).finally(() => { if (timer) clearTimeout(timer); })
@@ -236,11 +227,11 @@ export async function* streamNexusChat(
     }
   }
 
-  throw lastError instanceof Error ? lastError : new Error('NEXUS no respondió.');
+  throw lastError instanceof Error ? lastError : new Error('El motor de Calili no respondió.');
 }
 
 // ---------------------------------------------------------------------------
-// Fase 3: herramientas y visión (proveedor principal; el local no las tiene)
+// Fase 3: herramientas y visión (las atiende el proveedor principal)
 // ---------------------------------------------------------------------------
 
 export interface NexusToolCall {
@@ -304,7 +295,7 @@ export async function completeWithTools(
   }
   if (!response.ok) {
     const detail = await response.text().catch(() => '');
-    throw providerError(`El motor NEXUS (${provider.id})`, response.status, detail);
+    throw providerError(`El motor de Calili (${provider.id})`, response.status, detail);
   }
 
   const data = await response.json();

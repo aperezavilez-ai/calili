@@ -32,7 +32,7 @@ export function buildSystemPrompt(capabilities: CaliliCapabilities): string {
   }
   if (capabilities.readRepos) {
     tools.push(
-      'leer_repositorio: lee repositorios públicos de GitHub (README, estructura y datos del repo) cuando el usuario comparta un enlace o pida analizar uno.',
+      'leer_repositorio: lee repositorios públicos de GitHub (README, estructura y el CÓDIGO de los archivos clave; con el parámetro «archivo» lee un archivo concreto) cuando el usuario comparta un enlace o pida analizar uno. Puedes encadenar llamadas: primero la vista general y después el archivo que falte.',
     );
   }
   if (capabilities.vision) {

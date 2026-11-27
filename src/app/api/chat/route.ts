@@ -7,6 +7,7 @@ import {
   chatProviderAvailable,
   NexusConfigError,
   type NexusMessage,
+  type NexusCompletion,
 } from '@/lib/nexus-gateway';
 import { buildSystemPrompt } from '@/lib/system-prompt';
 import { requireApiUser } from '@/lib/api-auth';
@@ -14,7 +15,7 @@ import { publicErrorMessage } from '@/lib/response-policy';
 import { toolCapabilities, toolDefinitions, executeTool } from '@/lib/tools';
 import type { GeneratedFile } from '@/lib/file-generator';
 
-// nodejs: en desarrollo debe poder alcanzar el NEXUS local (127.0.0.1).
+// nodejs: las herramientas del servidor (sharp, archivos) lo requieren.
 export const runtime = 'nodejs';
 export const maxDuration = 300;
 
@@ -86,6 +87,22 @@ function toolStatus(name: string): string {
 const CONFIRM_FIRST_RE = /(antes de (proceder|hacer|continuar|seguir|empezar)|dime si entendiste|no (procedas|hagas|contin[uú]es|sigas|empieces)|conf[ií]rmame( que| si)? entend|espera (mi|a que te) confirm)/i;
 function asksConfirmFirst(text: string): boolean {
   return CONFIRM_FIRST_RE.test(text);
+}
+
+// Dieta del turno (v3.4.6): la pasada de decisión con herramientas
+// cuesta una generación completa SIN transmitir, con las definiciones
+// de las 23 herramientas a cuestas (~16 mil caracteres). Un mensaje
+// conversacional («quiero hacer una app, ¿puedes ayudarme?») pagaba
+// ese peaje entero y tardó 18 s en vivo (juicio de Luis, 2026-11-27).
+// Ahora: si el mensaje NO huele a trabajo de herramientas, el turno va
+// directo al streaming y la primera palabra llega en segundos. El
+// clasificador es determinista y está sesgado a lo seguro: un falso
+// positivo solo cuesta la latencia de antes; el patrón cubre verbos y
+// sustantivos de cada herramienta (crear/buscar/leer/recordar/clima/
+// repo/URL…) para no dejar encargos reales sin su pasada.
+const TOOL_INTENT_RE = /(https?:\/\/|github\.com|\b(crea|crear|genera|generar|dibuja|dibujar|hazme|ármame|armame|compón|compon|redacta|redactar|busca|buscar|investiga|investigar|lee|leer|revisa|revisar|analiza|analizar|clona|clonar|edita|editar|amplía|ampliar|transforma|transformar|convierte|convertir|extrae|extraer|descarga|descargar|recuerda|recordar|olvida|olvidar|apunta|apuntar|calcula|calcular)\b|\b(imagen|foto|video|música|canción|qr|presentación|diapositivas|archivo|documento|narración|audio|logo|repositorio|clima|tipo de cambio)\b|\b(me llamo|mi nombre es|no olvides|cuánto es|cuanto es)\b)/i;
+function looksLikeToolWork(text: string): boolean {
+  return TOOL_INTENT_RE.test(text);
 }
 
 function errorMessage(error: unknown): string {
@@ -200,6 +217,66 @@ export async function POST(req: NextRequest) {
         // Latido: sin bytes por minutos (un video generandose), los
         // proxies cortan la conexion aunque la funcion siga viva.
         const heartbeat = setInterval(() => send(controller, { status: 'working' }), 15000);
+
+        // Bucle agéntico (v3.4.6): ejecuta las llamadas que el modelo
+        // pidió y, con los resultados a la vista, le permite pedir el
+        // SIGUIENTE paso (hasta MAX_TOOL_ROUNDS rondas). Antes el turno
+        // hacía UNA sola pasada: un encargo de dos herramientas
+        // encadenadas (leer un repo y luego su archivo principal, buscar
+        // y luego armar el QR) perdía el segundo paso. Guardia: la
+        // misma llamada con los mismos argumentos no se repite.
+        const MAX_TOOL_ROUNDS = 3;
+        const runToolRounds = async (
+          firstCompletion: NexusCompletion,
+          baseMessages: NexusMessage[],
+          definitions: unknown[],
+        ): Promise<{ callsRun: number; files: GeneratedFile[]; workingMessages: unknown[] }> => {
+          const files: GeneratedFile[] = [];
+          const workingMessages: unknown[] = [...baseMessages];
+          const executed = new Set<string>();
+          let callsRun = 0;
+          let completion = firstCompletion;
+          for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
+            const fresh = completion.toolCalls.filter((call) => {
+              const signature = `${call.function.name}:${call.function.arguments}`;
+              return !executed.has(signature);
+            });
+            if (fresh.length === 0) break;
+            const callsToRun = fresh.slice(0, 3);
+            for (const call of callsToRun) {
+              executed.add(`${call.function.name}:${call.function.arguments}`);
+            }
+            workingMessages.push({
+              role: 'assistant',
+              content: completion.content || null,
+              tool_calls: callsToRun,
+            });
+            for (const call of callsToRun) {
+              send(controller, { status: toolStatus(call.function.name) });
+              const execution = await executeTool(call.function.name, call.function.arguments, { images: imageList });
+              callsRun++;
+              if (execution.file) files.push(execution.file);
+              if (execution.memoryEvent) send(controller, { memory: execution.memoryEvent });
+              workingMessages.push({ role: 'tool', tool_call_id: call.id, content: execution.resultForModel });
+            }
+            if (round === MAX_TOOL_ROUNDS - 1) break;
+            try {
+              completion = await completeWithTools(
+                decisionContext(workingMessages as unknown as NexusMessage[]),
+                definitions,
+                req.signal,
+              );
+            } catch (error) {
+              // Si la decisión de la ronda extra falla, se cierra con
+              // lo ya hecho: el usuario recibe su respuesta con los
+              // resultados en mano, no un error.
+              console.error('Calili: ronda extra de herramientas falló, se cierra con lo hecho', error);
+              break;
+            }
+          }
+          return { callsRun, files, workingMessages };
+        };
+
         try {
           send(controller, { status: 'Pensando…' });
 
@@ -284,22 +361,10 @@ export async function POST(req: NextRequest) {
                   req.signal,
                 );
                 if (completion.toolCalls.length > 0) {
-                  const callsToRun = completion.toolCalls.slice(0, 3);
-                  const workingMessages: unknown[] = [
-                    ...fullMessages,
-                    { role: 'assistant', content: completion.content || null, tool_calls: callsToRun },
-                  ];
-                  const files: GeneratedFile[] = [];
-                  for (const call of callsToRun) {
-                    send(controller, { status: toolStatus(call.function.name) });
-                    const execution = await executeTool(call.function.name, call.function.arguments, { images: imageList });
-                    if (execution.file) files.push(execution.file);
-                    if (execution.memoryEvent) send(controller, { memory: execution.memoryEvent });
-                    workingMessages.push({ role: 'tool', tool_call_id: call.id, content: execution.resultForModel });
-                  }
-                  for (const file of files) send(controller, { file });
+                  const outcome = await runToolRounds(completion, fullMessages, toolDefinitions(caps));
+                  for (const file of outcome.files) send(controller, { file });
                   send(controller, { status: 'Escribiendo la respuesta…' });
-                  for await (const chunk of streamNexusChat(workingMessages as unknown as NexusMessage[], { signal: req.signal })) {
+                  for await (const chunk of streamNexusChat(outcome.workingMessages as unknown as NexusMessage[], { signal: req.signal })) {
                     send(controller, { content: chunk });
                   }
                   controller.enqueue(encoder.encode('data: [DONE]\n\n'));
@@ -375,7 +440,10 @@ export async function POST(req: NextRequest) {
           // --- Camino con herramientas (proveedor principal) --------------
           const definitions = toolDefinitions(caps);
           // En modo voz se salta la pasada de herramientas: la latencia manda.
-          if (!voiceMode && definitions.length > 0 && chatProviderAvailable()) {
+          // Dieta (v3.4.6): sin olor a herramientas, tampoco hay pasada —
+          // el turno cae al streaming directo de abajo y responde en
+          // segundos en vez de pagar la decisión completa.
+          if (!voiceMode && definitions.length > 0 && chatProviderAvailable() && looksLikeToolWork(lastUserText)) {
             try {
               const completion = await completeWithTools(
                 decisionContext(fullMessages),
@@ -384,34 +452,15 @@ export async function POST(req: NextRequest) {
               );
 
               if (completion.toolCalls.length > 0) {
-                const callsToRun = completion.toolCalls.slice(0, 3);
-                const workingMessages: unknown[] = [
-                  ...fullMessages,
-                  {
-                    role: 'assistant',
-                    content: completion.content || null,
-                    tool_calls: callsToRun,
-                  },
-                ];
-                const files: GeneratedFile[] = [];
-                for (const call of callsToRun) {
-                  send(controller, { status: toolStatus(call.function.name) });
-                  const execution = await executeTool(call.function.name, call.function.arguments, { images: imageList });
-                  if (execution.file) files.push(execution.file);
-                  if (execution.memoryEvent) send(controller, { memory: execution.memoryEvent });
-                  workingMessages.push({
-                    role: 'tool',
-                    tool_call_id: call.id,
-                    content: execution.resultForModel,
-                  });
-                }
+                const outcome = await runToolRounds(completion, fullMessages, definitions);
+                const files = outcome.files;
                 for (const file of files) {
                   send(controller, { file });
                 }
                 send(controller, { status: 'Escribiendo la respuesta…' });
                 let closingText = '';
                 for await (const chunk of streamNexusChat(
-                  workingMessages as unknown as NexusMessage[],
+                  outcome.workingMessages as unknown as NexusMessage[],
                   { signal: req.signal },
                 )) {
                   closingText += chunk;
