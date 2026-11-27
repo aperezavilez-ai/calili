@@ -17,6 +17,7 @@ export interface ToolCapabilities {
   utilities: boolean;
   memory: boolean;
   googleMedia: boolean;
+  videoGen: boolean;
   avatarService: boolean;
   imageTools: boolean;
   narration: boolean;
@@ -33,6 +34,8 @@ export function toolCapabilities(): ToolCapabilities {
     utilities: true,
     memory: true,
     googleMedia: Boolean(googleAiKey()),
+    // El video vive si hay Google (Omni) o ME AI (Seedance 2, v3.4.4).
+    videoGen: Boolean(googleAiKey()) || Boolean(process.env.MEAI_API_KEY),
     avatarService: Boolean(process.env.AVATAR_SERVICE_URL),
     // Clonar/transformar/ampliar/extraer trabajan sobre la imagen
     // adjunta con sharp y la visión ya conectadas: sin llaves nuevas.
@@ -193,7 +196,7 @@ export function toolDefinitions(caps: ToolCapabilities) {
     });
   }
 
-  if (caps.googleMedia) {
+  if (caps.videoGen) {
     tools.push({
       type: 'function',
       function: {
@@ -210,6 +213,9 @@ export function toolDefinitions(caps: ToolCapabilities) {
         },
       },
     });
+  }
+
+  if (caps.googleMedia) {
     tools.push({
       type: 'function',
       function: {
@@ -725,11 +731,26 @@ export async function executeTool(name: string, rawArgs: string, context?: { ima
         };
       }
       case 'crear_video': {
+        const promptText = String(args.descripcion ?? '');
+        const firstFrame = args.usar_adjunta ? context?.images?.[0] : undefined;
+        // v3.4.4 — Seedance 2 (vía ME AI) es el motor principal y el
+        // de Google (Omni) el respaldo: si Seedance falla al crear la
+        // tarea o la tarea termina en fallo, se intenta con Google
+        // antes de dar el turno por perdido.
+        if (process.env.MEAI_API_KEY) {
+          try {
+            const { seedanceVideo } = await import('@/lib/meai-video');
+            const result = await seedanceVideo(promptText, firstFrame);
+            return {
+              resultForModel: 'Video creado (con audio): ya se le mostró al usuario con reproductor y botón de descarga. Confírmalo en una frase breve y sin mencionar motores ni proveedores.',
+              file: result.file,
+            };
+          } catch (error) {
+            console.error('Calili: Seedance falló; se intenta el respaldo de video', error);
+          }
+        }
         const { googleVideo } = await import('@/lib/google-media');
-        const result = await googleVideo(
-          String(args.descripcion ?? ''),
-          args.usar_adjunta ? context?.images?.[0] : undefined,
-        );
+        const result = await googleVideo(promptText, firstFrame);
         return {
           resultForModel: 'Video creado (con audio): ya se le mostró al usuario con reproductor y botón de descarga. Confírmalo en una frase breve y sin mencionar motores ni proveedores.',
           file: result.file,
